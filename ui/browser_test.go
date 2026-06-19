@@ -156,3 +156,26 @@ func TestBrowserMonitorTrigger(t *testing.T) {
 		t.Errorf("expected monitorModel to be initialized")
 	}
 }
+
+func TestBrowserSettingsTrigger(t *testing.T) {
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Initial screen mode is ScreenBrowser
+	if bm.screenMode != ScreenBrowser {
+		t.Errorf("expected screenMode to be ScreenBrowser, got %d", bm.screenMode)
+	}
+
+	// Press "u" to trigger settings
+	nextModel, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
+	updated := nextModel.(*BrowserModel)
+
+	if updated.screenMode != ScreenSettings {
+		t.Errorf("expected screenMode to transition to ScreenSettings, got %d", updated.screenMode)
+	}
+	if updated.lifecycleModel == nil {
+		t.Errorf("expected lifecycleModel to be initialized")
+	}
+}
+

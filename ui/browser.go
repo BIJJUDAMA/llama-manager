@@ -36,6 +36,7 @@ const (
 	ScreenBenchmarkProgress
 	ScreenPerformanceDashboard
 	ScreenServerMonitor
+	ScreenSettings
 )
 
 type SidebarItemType int
@@ -81,6 +82,7 @@ type BrowserModel struct {
 	benchmarkProgress   *BenchmarkProgressModel
 	perfDashboard       *PerformanceDashboardModel
 	monitorModel        *MonitorModel
+	lifecycleModel      *LifecycleModel
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -99,6 +101,7 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 		expandedCollections: make(map[string]bool),
 		sidebarItems:        []SidebarItem{},
 		monitorModel:        NewMonitorModel(srv),
+		lifecycleModel:      NewLifecycleModel(cfg, srv),
 	}
 }
 
@@ -282,6 +285,14 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildSidebar()
 		}
 
+	case updateMsg:
+		if m.lifecycleModel != nil {
+			_, cmd := m.lifecycleModel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
 	case benchmarkMsg:
 		if m.benchmarkProgress == nil {
 			break
@@ -426,6 +437,24 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					cmds = append(cmds, cmd)
 				}
 			}
+		} else if m.screenMode == ScreenSettings && m.lifecycleModel != nil {
+			switch msg.String() {
+			case "esc":
+				m.screenMode = ScreenBrowser
+				m.rebuildSidebar()
+			case "c", "C":
+				if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+					cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
+				}
+			case "u", "U":
+				if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+					cmds = append(cmds, m.lifecycleModel.StartUpdate())
+				}
+			case "r", "R":
+				if m.lifecycleModel.hasBackup && m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+					cmds = append(cmds, m.lifecycleModel.StartRollback())
+				}
+			}
 		} else if m.searchActive {
 			switch msg.String() {
 			case "enter":
@@ -508,6 +537,12 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "m", "M":
 				m.monitorModel.Refresh()
 				m.screenMode = ScreenServerMonitor
+
+			case "u", "U":
+				m.lifecycleModel.RefreshLocalVersion()
+				m.lifecycleModel.RefreshBackupStatus()
+				m.screenMode = ScreenSettings
+				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
 
 			case "space", "enter":
 				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
@@ -847,6 +882,11 @@ func (m *BrowserModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, monitorView)
 	}
 
+	if m.screenMode == ScreenSettings && m.lifecycleModel != nil {
+		settingsView := m.lifecycleModel.View(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, settingsView)
+	}
+
 	totalWidth := m.width
 	if totalWidth < 60 {
 		totalWidth = 60
@@ -980,13 +1020,14 @@ func (m *BrowserModel) View() string {
 	if m.searchActive {
 		footer = fmt.Sprintf("Search: %s  %s", m.searchInput.View(), StyleHelp.Render("[Esc] Clear/Exit  [Enter] Confirm"))
 	} else {
-		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Collections  %s Benchmark  %s Dashboard  %s Monitor  %s Search  %s Stop  %s Quit",
+		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Collections  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Search  %s Stop  %s Quit",
 			StyleHelpKey.Render("[Enter]"),
 			StyleHelpKey.Render("[F]"),
 			StyleHelpKey.Render("[C]"),
 			StyleHelpKey.Render("[B]"),
 			StyleHelpKey.Render("[V]"),
 			StyleHelpKey.Render("[M]"),
+			StyleHelpKey.Render("[U]"),
 			StyleHelpKey.Render("[/]"),
 			StyleHelpKey.Render("[S]"),
 			StyleHelpKey.Render("[Q]"),
