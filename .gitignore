@@ -1,0 +1,14 @@
+# Binaries and build artifacts
+llama-manager
+llama-manager.exe
+*.exe
+*.dll
+
+# App directories
+llama.cpp/
+models/
+profiles/
+cache/
+benchmarks/
+downloads/
+config.json
