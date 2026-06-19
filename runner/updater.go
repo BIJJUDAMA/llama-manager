@@ -1,0 +1,516 @@
+package runner
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"time"
+
+	"llama-manager/hardware"
+)
+
+type GithubRelease struct {
+	TagName string         `json:"tag_name"`
+	Name    string         `json:"name"`
+	Body    string         `json:"body"`
+	Assets  []ReleaseAsset `json:"assets"`
+}
+
+type ReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int64  `json:"size"`
+}
+
+// QueryLocalVersion runs llama-server (or llama-cli) --version and parses output.
+func QueryLocalVersion(llamaCppDir string) (version string, commit string, buildInfo string, err error) {
+	binaryName := "llama-server"
+	if runtime.GOOS == "windows" {
+		binaryName = "llama-server.exe"
+	}
+	binaryPath := filepath.Join(llamaCppDir, binaryName)
+	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
+		return "Not Installed", "N/A", "N/A", fmt.Errorf("llama-server binary not found")
+	}
+
+	cmd := exec.Command(binaryPath, "--version")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	_ = cmd.Run() // run even if non-zero exit code, version commands sometimes fail but write version
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		output = strings.TrimSpace(stderr.String())
+	}
+
+	if output == "" {
+		return "Unknown", "Unknown", "Unknown", fmt.Errorf("no output from version command")
+	}
+
+	// Typical output format:
+	// version: 9707 (e1efd0991)
+	// built with Clang 20.1.8 for Windows x86_64
+	versionRegex := regexp.MustCompile(`version:\s*([^\s(]+)`)
+	commitRegex := regexp.MustCompile(`\(([^)]+)\)`)
+
+	version = "Unknown"
+	commit = "Unknown"
+	buildInfo = "Unknown"
+
+	lines := strings.Split(output, "\n")
+	if len(lines) > 0 {
+		vMatch := versionRegex.FindStringSubmatch(lines[0])
+		if len(vMatch) > 1 {
+			version = vMatch[1]
+		}
+		cMatch := commitRegex.FindStringSubmatch(lines[0])
+		if len(cMatch) > 1 {
+			commit = cMatch[1]
+		}
+	}
+	if len(lines) > 1 {
+		buildInfo = strings.TrimSpace(lines[1])
+	} else if len(lines) > 0 {
+		buildInfo = strings.TrimSpace(lines[0])
+	}
+
+	return version, commit, buildInfo, nil
+}
+
+// CheckLatestRelease queries GitHub API for the latest llama.cpp release.
+func CheckLatestRelease() (*GithubRelease, error) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "llama-manager-updater")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %s", resp.Status)
+	}
+
+	var release GithubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, err
+	}
+
+	return &release, nil
+}
+
+// MatchAsset finds the most suitable asset for the user's OS, CPU/GPU architecture.
+func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (*ReleaseAsset, error) {
+	if len(release.Assets) == 0 {
+		return nil, fmt.Errorf("no assets in release")
+	}
+
+	var bestAsset *ReleaseAsset
+	bestScore := -1
+
+	for _, asset := range release.Assets {
+		nameLower := strings.ToLower(asset.Name)
+
+		// 1. Extension check
+		if !strings.HasSuffix(nameLower, ".zip") && !strings.HasSuffix(nameLower, ".tar.gz") && !strings.HasSuffix(nameLower, ".tgz") {
+			continue
+		}
+
+		// 2. OS check
+		osMatches := false
+		switch strings.ToLower(specs.OS) {
+		case "windows":
+			if strings.Contains(nameLower, "win") || strings.Contains(nameLower, "windows") {
+				osMatches = true
+			}
+		case "darwin", "macos":
+			if strings.Contains(nameLower, "macos") || strings.Contains(nameLower, "osx") || strings.Contains(nameLower, "darwin") {
+				osMatches = true
+			}
+		default: // assume linux
+			if strings.Contains(nameLower, "linux") || strings.Contains(nameLower, "ubuntu") || strings.Contains(nameLower, "debian") {
+				osMatches = true
+			}
+		}
+
+		if !osMatches {
+			continue
+		}
+
+		score := 100
+
+		// 3. Architecture check
+		if strings.ToLower(specs.OS) == "darwin" || strings.ToLower(specs.OS) == "macos" {
+			if strings.Contains(nameLower, "arm64") {
+				score += 50
+			}
+		} else {
+			if strings.Contains(nameLower, "x64") || strings.Contains(nameLower, "x86_64") || strings.Contains(nameLower, "amd64") {
+				score += 30
+			}
+		}
+
+		// 4. GPU Backend check
+		switch specs.GPU.Type {
+		case "CUDA":
+			if strings.Contains(nameLower, "cuda") || strings.Contains(nameLower, "cu") {
+				score += 80
+				if strings.Contains(nameLower, "cu12") {
+					score += 10
+				}
+			} else if strings.Contains(nameLower, "llvm") || strings.Contains(nameLower, "cpu") {
+				score += 10
+			}
+		case "ROCm":
+			if strings.Contains(nameLower, "rocm") {
+				score += 80
+			} else if strings.Contains(nameLower, "llvm") || strings.Contains(nameLower, "cpu") {
+				score += 10
+			}
+		case "Vulkan":
+			if strings.Contains(nameLower, "vulkan") {
+				score += 80
+			} else if strings.Contains(nameLower, "llvm") || strings.Contains(nameLower, "cpu") {
+				score += 10
+			}
+		default: // CPU
+			if strings.Contains(nameLower, "llvm") || strings.Contains(nameLower, "cpu") {
+				score += 80
+			} else if strings.Contains(nameLower, "win-llvm") || strings.Contains(nameLower, "win64") {
+				score += 50
+			}
+		}
+
+		if score > bestScore {
+			bestScore = score
+			// Keep a pointer to the asset inside the loop (need to allocate/copy)
+			assetCopy := asset
+			bestAsset = &assetCopy
+		}
+	}
+
+	if bestAsset == nil {
+		return nil, fmt.Errorf("no matching asset found for OS %s and GPU type %s", specs.OS, specs.GPU.Type)
+	}
+
+	return bestAsset, nil
+}
+
+// DownloadRelease downloads an asset URL and writes progress fraction (0.0 to 1.0) to progressChan.
+func DownloadRelease(url string, destPath string, progressChan chan float64) error {
+	defer func() {
+		if progressChan != nil {
+			close(progressChan)
+		}
+	}()
+
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "llama-manager-updater")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: server returned status %s", resp.Status)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	totalSize := resp.ContentLength
+	var downloaded int64
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			_, werr := out.Write(buf[:n])
+			if werr != nil {
+				return werr
+			}
+			downloaded += int64(n)
+			if totalSize > 0 && progressChan != nil {
+				progressChan <- float64(downloaded) / float64(totalSize)
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				break
+			}
+			return rerr
+		}
+	}
+
+	return nil
+}
+
+// ExtractArchive extracts zip/tar.gz into destDir and flattens single directories.
+func ExtractArchive(archivePath string, destDir string) error {
+	ext := strings.ToLower(filepath.Ext(archivePath))
+	var err error
+
+	if ext == ".zip" {
+		err = extractZip(archivePath, destDir)
+	} else if ext == ".tar.gz" || ext == ".tgz" || strings.HasSuffix(strings.ToLower(archivePath), ".tar.gz") {
+		err = extractTarGz(archivePath, destDir)
+	} else {
+		return fmt.Errorf("unsupported archive format: %s", ext)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Flatten root directory if single directory found
+	return flattenIfSingleFolder(destDir)
+}
+
+func extractZip(archivePath string, destDir string) error {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	for _, f := range r.File {
+		filePath := filepath.Join(destDir, filepath.FromSlash(f.Name))
+
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(filePath, f.Mode()); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return err
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+
+		out, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+
+		_, err = io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func extractTarGz(archivePath string, destDir string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		filePath := filepath.Join(destDir, filepath.FromSlash(header.Name))
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(filePath, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+				return err
+			}
+
+			out, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+
+			_, err = io.Copy(out, tr)
+			out.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func flattenIfSingleFolder(destDir string) error {
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		return err
+	}
+
+	// Filter out files/directories to find if there is a single directory
+	var dirEntry os.DirEntry
+	dirCount := 0
+	fileCount := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			dirEntry = entry
+			dirCount++
+		} else {
+			fileCount++
+		}
+	}
+
+	if dirCount == 1 && fileCount == 0 {
+		subDir := filepath.Join(destDir, dirEntry.Name())
+		subEntries, err := os.ReadDir(subDir)
+		if err != nil {
+			return err
+		}
+
+		for _, se := range subEntries {
+			srcPath := filepath.Join(subDir, se.Name())
+			dstPath := filepath.Join(destDir, se.Name())
+			if err := os.Rename(srcPath, dstPath); err != nil {
+				// Fallback if rename fails
+				if err := copyDirOrFile(srcPath, dstPath); err != nil {
+					return err
+				}
+			}
+		}
+		_ = os.RemoveAll(subDir)
+	}
+
+	return nil
+}
+
+func copyDirOrFile(src string, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		return copyDir(src, dst)
+	}
+	return copyFile(src, dst)
+}
+
+// CreateBackup backs up the src folder to backupDst atomically.
+func CreateBackup(src string, backupDst string) error {
+	_ = os.RemoveAll(backupDst)
+
+	if err := os.Rename(src, backupDst); err == nil {
+		return nil
+	}
+
+	return copyDir(src, backupDst)
+}
+
+// RollbackBackup restores the backup directory.
+func RollbackBackup(backupSrc string, dst string) error {
+	if _, err := os.Stat(backupSrc); os.IsNotExist(err) {
+		return fmt.Errorf("backup does not exist")
+	}
+
+	_ = os.RemoveAll(dst)
+
+	if err := os.Rename(backupSrc, dst); err == nil {
+		return nil
+	}
+
+	return copyDir(backupSrc, dst)
+}
+
+func copyDir(src string, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+		return copyFile(path, dstPath)
+	})
+}
+
+func copyFile(src string, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
