@@ -1,0 +1,37 @@
+package runner
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestRunnerBinaryNotFound(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "llama-runner-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	runner := NewServerRunner(tempDir)
+
+	// Try to start a server with a non-existent llama.cpp dir
+	err = runner.Start(filepath.Join(tempDir, "missing-dir"), "some-model.gguf", 2048, 4, 999, 512, "127.0.0.1", 8080)
+	if err == nil {
+		t.Errorf("expected error starting server with missing directory, got nil")
+	}
+}
+
+func TestMultiInstanceTracking(t *testing.T) {
+	runner := NewServerRunner("")
+
+	// Initially, it should have no active instances
+	if len(runner.GetAllInstances()) != 0 {
+		t.Errorf("expected 0 running instances initially")
+	}
+
+	status, model, port := runner.GetStatus()
+	if status != StatusStopped || model != "" || port != 8080 {
+		t.Errorf("incorrect stopped status values: %d, %q, %d", status, model, port)
+	}
+}
