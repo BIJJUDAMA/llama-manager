@@ -228,4 +228,27 @@ func TestBrowserTokenConfiguration(t *testing.T) {
 	}
 }
 
+func TestBrowserDownloaderTrigger(t *testing.T) {
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Initial screen mode is ScreenBrowser
+	if bm.screenMode != ScreenBrowser {
+		t.Errorf("expected screenMode to be ScreenBrowser, got %d", bm.screenMode)
+	}
+
+	// Press "d" to trigger downloader
+	nextModel, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated := nextModel.(*BrowserModel)
+
+	if updated.screenMode != ScreenDownloader {
+		t.Errorf("expected screenMode to transition to ScreenDownloader, got %d", updated.screenMode)
+	}
+	if updated.downloaderModel == nil {
+		t.Errorf("expected downloaderModel to be initialized")
+	}
+}
+
+
 

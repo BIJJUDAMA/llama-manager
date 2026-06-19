@@ -37,6 +37,7 @@ const (
 	ScreenPerformanceDashboard
 	ScreenServerMonitor
 	ScreenSettings
+	ScreenDownloader
 )
 
 type SidebarItemType int
@@ -83,6 +84,8 @@ type BrowserModel struct {
 	perfDashboard       *PerformanceDashboardModel
 	monitorModel        *MonitorModel
 	lifecycleModel      *LifecycleModel
+	downloaderModel     *DownloaderModel
+	downloadQueue       *model.DownloadQueue
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -90,6 +93,8 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 	ti.Placeholder = "Type to search..."
 	ti.CharLimit = 156
 	ti.Width = 30
+
+	q := model.NewDownloadQueue(cfg.Paths.Models, cfg.HFToken)
 
 	return &BrowserModel{
 		config:              cfg,
@@ -102,6 +107,8 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 		sidebarItems:        []SidebarItem{},
 		monitorModel:        NewMonitorModel(srv),
 		lifecycleModel:      NewLifecycleModel(cfg, srv),
+		downloadQueue:       q,
+		downloaderModel:     NewDownloaderModel(cfg, q),
 	}
 }
 
@@ -230,6 +237,21 @@ func (m *BrowserModel) readBenchmarkChan(ch chan benchmarkMsg) tea.Cmd {
 	}
 }
 
+type downloadQueueMsg struct {
+	task *model.DownloadTask
+}
+
+func (m *BrowserModel) readDownloadQueueChan() tea.Cmd {
+	return func() tea.Msg {
+		qChan := m.downloadQueue.GetChan()
+		task, ok := <-qChan
+		if !ok {
+			return nil
+		}
+		return downloadQueueMsg{task: task}
+	}
+}
+
 type tickMsg struct{}
 
 func tickCmd() tea.Cmd {
@@ -244,6 +266,7 @@ func (m *BrowserModel) Init() tea.Cmd {
 		m.loadProfilesCmd(),
 		detectHardwareCmd,
 		tickCmd(),
+		m.readDownloadQueueChan(),
 	)
 }
 
@@ -284,6 +307,18 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.profiles = msg.profiles
 			m.rebuildSidebar()
 		}
+
+	case downloadQueueMsg:
+		if m.downloaderModel != nil {
+			_, cmd := m.downloaderModel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if msg.task != nil && msg.task.Status == model.StatusCompleted {
+			cmds = append(cmds, discoverCmd(m.config.Paths.Models))
+		}
+		cmds = append(cmds, m.readDownloadQueueChan())
 
 	case updateMsg:
 		if m.lifecycleModel != nil {
@@ -467,6 +502,22 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		} else if m.screenMode == ScreenDownloader && m.downloaderModel != nil {
+			switch msg.String() {
+			case "esc":
+				if m.downloaderModel.focus == FocusSearch {
+					m.downloaderModel.focus = FocusRepos
+					m.downloaderModel.searchInput.Blur()
+				} else {
+					m.screenMode = ScreenBrowser
+					m.rebuildSidebar()
+				}
+			default:
+				_, cmd := m.downloaderModel.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
 		} else if m.searchActive {
 			switch msg.String() {
 			case "enter":
@@ -555,6 +606,11 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lifecycleModel.RefreshBackupStatus()
 				m.screenMode = ScreenSettings
 				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
+
+			case "d", "D":
+				m.downloaderModel.focus = FocusSearch
+				m.downloaderModel.searchInput.Focus()
+				m.screenMode = ScreenDownloader
 
 			case "space", "enter":
 				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
@@ -899,6 +955,11 @@ func (m *BrowserModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, settingsView)
 	}
 
+	if m.screenMode == ScreenDownloader && m.downloaderModel != nil {
+		downView := m.downloaderModel.View(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, downView)
+	}
+
 	totalWidth := m.width
 	if totalWidth < 60 {
 		totalWidth = 60
@@ -1032,7 +1093,7 @@ func (m *BrowserModel) View() string {
 	if m.searchActive {
 		footer = fmt.Sprintf("Search: %s  %s", m.searchInput.View(), StyleHelp.Render("[Esc] Clear/Exit  [Enter] Confirm"))
 	} else {
-		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Collections  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Search  %s Stop  %s Quit",
+		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Collections  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Downloader  %s Search  %s Stop  %s Quit",
 			StyleHelpKey.Render("[Enter]"),
 			StyleHelpKey.Render("[F]"),
 			StyleHelpKey.Render("[C]"),
@@ -1040,6 +1101,7 @@ func (m *BrowserModel) View() string {
 			StyleHelpKey.Render("[V]"),
 			StyleHelpKey.Render("[M]"),
 			StyleHelpKey.Render("[U]"),
+			StyleHelpKey.Render("[D]"),
 			StyleHelpKey.Render("[/]"),
 			StyleHelpKey.Render("[S]"),
 			StyleHelpKey.Render("[Q]"),
