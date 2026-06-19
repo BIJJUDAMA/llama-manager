@@ -119,3 +119,53 @@ func TestConfigHelpers(t *testing.T) {
 		t.Errorf("expected collection 'Coding' to be deleted when empty")
 	}
 }
+
+func TestConfigTagsAndNotes(t *testing.T) {
+	cfg := DefaultConfig()
+
+	modelPath := "models/Qwen/qwen2.5.gguf"
+
+	// Test initial state
+	if len(cfg.ModelTags[modelPath]) != 0 {
+		t.Errorf("expected no tags initially")
+	}
+	if cfg.GetNotes(modelPath) != "" {
+		t.Errorf("expected no notes initially")
+	}
+
+	// Test Tag helper methods
+	cfg.AddTag(modelPath, "Coding")
+	cfg.AddTag(modelPath, "MoE")
+	cfg.AddTag(modelPath, "Coding") // Duplicate add
+
+	tags := cfg.ModelTags[modelPath]
+	if len(tags) != 2 {
+		t.Errorf("expected 2 tags, got %d", len(tags))
+	}
+	if tags[0] != "Coding" || tags[1] != "MoE" {
+		t.Errorf("unexpected tags: %v", tags)
+	}
+
+	cfg.RemoveTag(modelPath, "Coding")
+	tags = cfg.ModelTags[modelPath]
+	if len(tags) != 1 || tags[0] != "MoE" {
+		t.Errorf("expected only 'MoE' tag, got %v", tags)
+	}
+
+	cfg.RemoveTag(modelPath, "MoE")
+	if _, ok := cfg.ModelTags[modelPath]; ok {
+		t.Errorf("expected model tags slice to be deleted from map when empty")
+	}
+
+	// Test Notes helper methods
+	cfg.SetNotes(modelPath, "This is a test note.")
+	if cfg.GetNotes(modelPath) != "This is a test note." {
+		t.Errorf("expected note to be set, got %q", cfg.GetNotes(modelPath))
+	}
+
+	cfg.SetNotes(modelPath, "")
+	if cfg.GetNotes(modelPath) != "" {
+		t.Errorf("expected note to be deleted when set to empty string")
+	}
+}
+

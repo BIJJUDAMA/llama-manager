@@ -23,6 +23,8 @@ type Config struct {
 	Theme             string              `json:"theme"`
 	ModelProfiles     map[string]string   `json:"model_profiles"`
 	HFToken           string              `json:"hf_token"`
+	ModelTags         map[string][]string `json:"model_tags"`
+	ModelNotes        map[string]string   `json:"model_notes"`
 }
 
 const ConfigFileName = "config.json"
@@ -50,6 +52,12 @@ func Load() (*Config, error) {
 
 	if cfg.ModelProfiles == nil {
 		cfg.ModelProfiles = make(map[string]string)
+	}
+	if cfg.ModelTags == nil {
+		cfg.ModelTags = make(map[string][]string)
+	}
+	if cfg.ModelNotes == nil {
+		cfg.ModelNotes = make(map[string]string)
 	}
 	if cfg.Favorites == nil {
 		cfg.Favorites = []string{}
@@ -85,6 +93,8 @@ func DefaultConfig() *Config {
 		LastSelectedModel: "",
 		Theme:             "dark",
 		ModelProfiles:     make(map[string]string),
+		ModelTags:         make(map[string][]string),
+		ModelNotes:        make(map[string]string),
 	}
 }
 
@@ -190,3 +200,58 @@ func (c *Config) RemoveFromCollection(collection string, modelPath string) {
 		delete(c.Collections, collection)
 	}
 }
+
+// AddTag adds a tag to the model path if it doesn't already exist.
+func (c *Config) AddTag(modelPath string, tag string) {
+	if c.ModelTags == nil {
+		c.ModelTags = make(map[string][]string)
+	}
+	tags := c.ModelTags[modelPath]
+	for _, t := range tags {
+		if t == tag {
+			return
+		}
+	}
+	c.ModelTags[modelPath] = append(tags, tag)
+}
+
+// RemoveTag removes a tag from the model path.
+func (c *Config) RemoveTag(modelPath string, tag string) {
+	if c.ModelTags == nil {
+		return
+	}
+	tags, ok := c.ModelTags[modelPath]
+	if !ok {
+		return
+	}
+	for i, t := range tags {
+		if t == tag {
+			c.ModelTags[modelPath] = append(tags[:i], tags[i+1:]...)
+			break
+		}
+	}
+	if len(c.ModelTags[modelPath]) == 0 {
+		delete(c.ModelTags, modelPath)
+	}
+}
+
+// SetNotes sets the notes for the model path.
+func (c *Config) SetNotes(modelPath string, notes string) {
+	if c.ModelNotes == nil {
+		c.ModelNotes = make(map[string]string)
+	}
+	if notes == "" {
+		delete(c.ModelNotes, modelPath)
+	} else {
+		c.ModelNotes[modelPath] = notes
+	}
+}
+
+// GetNotes gets the notes for the model path.
+func (c *Config) GetNotes(modelPath string) string {
+	if c.ModelNotes == nil {
+		return ""
+	}
+	return c.ModelNotes[modelPath]
+}
+
