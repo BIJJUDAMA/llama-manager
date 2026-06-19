@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// DiscoverModels recursively scans the given root directory for GGUF files and parses their metadata.
+// DiscoverModels recursively scans the given root directory for GGUF files and parses their metadata, utilizing a metadata cache.
 func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 	var models []*GGUFMetadata
 
@@ -18,23 +18,57 @@ func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 		return nil, nil
 	}
 
+	cachePath := filepath.Join("cache", "metadata_cache.json")
+	cache, _ := LoadCache(cachePath)
+	if cache == nil {
+		cache = NewMetadataCache()
+	}
+
+	cacheUpdated := false
+
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			// Skip files/directories that generate errors (e.g. permission issues)
 			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".gguf") {
-			meta, parseErr := ParseGGUF(path)
-			if parseErr == nil {
+			info, statErr := d.Info()
+			if statErr != nil {
+				return nil
+			}
+
+			cacheKey := filepath.ToSlash(path)
+
+			var meta *GGUFMetadata
+			entry, exists := cache.Entries[cacheKey]
+			if exists && entry.ModTime == info.ModTime().Unix() && entry.Size == info.Size() {
+				meta = entry.Metadata
+				meta.FilePath = path
+			} else {
+				var parseErr error
+				meta, parseErr = ParseGGUF(path)
+				if parseErr == nil {
+					cache.Entries[cacheKey] = &GGUFCacheEntry{
+						Metadata: meta,
+						ModTime:  info.ModTime().Unix(),
+						Size:     info.Size(),
+					}
+					cacheUpdated = true
+				}
+			}
+
+			if meta != nil {
 				models = append(models, meta)
 			}
-			// If parsing fails, we skip it (or could log it, but standard TUI ignores broken files)
 		}
 		return nil
 	})
 
 	if err != nil {
 		return nil, err
+	}
+
+	if cacheUpdated {
+		_ = cache.Save(cachePath)
 	}
 
 	return models, nil

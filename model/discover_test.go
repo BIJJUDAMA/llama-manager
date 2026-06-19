@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func createMockGGUFAt(path string, name string, arch string, ctxLen uint32) error {
@@ -109,5 +110,86 @@ func TestDiscoverModels(t *testing.T) {
 	}
 	if !foundQwen {
 		t.Errorf("Qwen Coder 7B was not discovered")
+	}
+}
+
+func TestDiscoverModelsCache(t *testing.T) {
+	hasCache := false
+	cacheFile := filepath.Join("cache", "metadata_cache.json")
+	
+	// Create cache dir if not exists so we can move cache there safely
+	_ = os.MkdirAll("cache", 0755)
+	
+	if _, err := os.Stat(cacheFile); err == nil {
+		hasCache = true
+		_ = os.Rename(cacheFile, cacheFile+".tmp")
+	}
+	defer func() {
+		_ = os.Remove(cacheFile)
+		if hasCache {
+			_ = os.Rename(cacheFile+".tmp", cacheFile)
+		}
+	}()
+
+	tempDir, err := os.MkdirTemp("", "llama-models-cache-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	modelPath := filepath.Join(tempDir, "model.gguf")
+	if err := createMockGGUFAt(modelPath, "Test Model", "llama", 2048); err != nil {
+		t.Fatalf("failed to create mock GGUF: %v", err)
+	}
+
+	// First scan (should populate cache)
+	models, err := DiscoverModels(tempDir)
+	if err != nil {
+		t.Fatalf("first scan failed: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "Test Model" {
+		t.Errorf("expected 1 discovered model")
+	}
+
+	// Get original file info
+	stat, err := os.Stat(modelPath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	origSize := stat.Size()
+	origModTime := stat.ModTime()
+
+	// Corrupt mock file on disk (so if cache fails, parsing it will fail)
+	// We write garbage of the exact same size and restore the original modtime.
+	garbage := make([]byte, origSize)
+	copy(garbage, []byte("garbage content"))
+	if err := os.WriteFile(modelPath, garbage, 0644); err != nil {
+		t.Fatalf("failed to write garbage: %v", err)
+	}
+	if err := os.Chtimes(modelPath, origModTime, origModTime); err != nil {
+		t.Fatalf("failed to restore modtime: %v", err)
+	}
+
+
+	// Second scan (should read from cache)
+	models2, err := DiscoverModels(tempDir)
+	if err != nil {
+		t.Fatalf("second scan failed: %v", err)
+	}
+	if len(models2) != 1 || models2[0].Name != "Test Model" {
+		t.Errorf("expected cache hit to return Test Model metadata despite corrupted file, got %v", models2)
+	}
+
+	// Change mod time on file to invalidate cache
+	futureTime := time.Now().Add(1 * time.Hour)
+	_ = os.Chtimes(modelPath, futureTime, futureTime)
+
+	// Third scan (should miss cache and attempt re-parse, which will fail since file has garbage content)
+	models3, err := DiscoverModels(tempDir)
+	if err != nil {
+		t.Fatalf("third scan failed: %v", err)
+	}
+	if len(models3) != 0 {
+		t.Errorf("expected cache miss to fail parsing and return 0 models, got %d", len(models3))
 	}
 }
