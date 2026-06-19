@@ -22,6 +22,7 @@ type Config struct {
 	LastSelectedModel string              `json:"last_selected_model"`
 	Theme             string              `json:"theme"`
 	ModelProfiles     map[string]string   `json:"model_profiles"`
+	HFToken           string              `json:"hf_token"`
 }
 
 const ConfigFileName = "config.json"
@@ -92,7 +93,7 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigFileName, data, 0644)
+	return os.WriteFile(ConfigFileName, data, 0600)
 }
 
 func (c *Config) CreateDirectories() error {
