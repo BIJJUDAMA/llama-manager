@@ -179,3 +179,53 @@ func TestBrowserSettingsTrigger(t *testing.T) {
 	}
 }
 
+func TestBrowserTokenConfiguration(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Transition to settings
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
+	bm = m.(*BrowserModel)
+
+	// Trigger token editing mode
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	bm = m.(*BrowserModel)
+
+	if !bm.lifecycleModel.tokenEditActive {
+		t.Errorf("expected tokenEditActive to be true after pressing 't'")
+	}
+
+	// Simulate typing "hf_testtoken123"
+	for _, char := range "hf_testtoken123" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Press enter to save
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if bm.lifecycleModel.tokenEditActive {
+		t.Errorf("expected tokenEditActive to be false after pressing Enter")
+	}
+
+	if bm.config.HFToken != "hf_testtoken123" {
+		t.Errorf("expected HFToken in config to be hf_testtoken123, got %q", bm.config.HFToken)
+	}
+}
+
+

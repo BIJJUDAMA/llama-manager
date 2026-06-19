@@ -438,21 +438,33 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else if m.screenMode == ScreenSettings && m.lifecycleModel != nil {
-			switch msg.String() {
-			case "esc":
-				m.screenMode = ScreenBrowser
-				m.rebuildSidebar()
-			case "c", "C":
-				if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
-					cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
+			if m.lifecycleModel.tokenEditActive {
+				_, cmd := m.lifecycleModel.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
 				}
-			case "u", "U":
-				if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
-					cmds = append(cmds, m.lifecycleModel.StartUpdate())
-				}
-			case "r", "R":
-				if m.lifecycleModel.hasBackup && m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
-					cmds = append(cmds, m.lifecycleModel.StartRollback())
+			} else {
+				switch msg.String() {
+				case "esc":
+					m.screenMode = ScreenBrowser
+					m.rebuildSidebar()
+				case "c", "C":
+					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
+					}
+				case "u", "U":
+					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						cmds = append(cmds, m.lifecycleModel.StartUpdate())
+					}
+				case "r", "R":
+					if m.lifecycleModel.hasBackup && m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						cmds = append(cmds, m.lifecycleModel.StartRollback())
+					}
+				case "t", "T":
+					_, cmd := m.lifecycleModel.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
 			}
 		} else if m.searchActive {

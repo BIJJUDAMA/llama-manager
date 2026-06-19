@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"llama-manager/config"
@@ -55,6 +56,8 @@ type LifecycleModel struct {
 	err                           error
 	hasBackup                     bool
 	width, height                 int
+	tokenInput                    textinput.Model
+	tokenEditActive               bool
 }
 
 func NewLifecycleModel(cfg *config.Config, srv *runner.ServerRunner) *LifecycleModel {
@@ -63,11 +66,19 @@ func NewLifecycleModel(cfg *config.Config, srv *runner.ServerRunner) *LifecycleM
 		specs = &hardware.HardwareSpecs{OS: runtime.GOOS}
 	}
 
+	ti := textinput.New()
+	ti.Placeholder = "Enter HF_TOKEN (hf_...)"
+	ti.CharLimit = 100
+	ti.Width = 40
+	ti.EchoMode = textinput.EchoPassword
+
 	m := &LifecycleModel{
-		srvRunner: srv,
-		config:    cfg,
-		specs:     specs,
-		state:     StateIdle,
+		srvRunner:       srv,
+		config:          cfg,
+		specs:           specs,
+		state:           StateIdle,
+		tokenInput:      ti,
+		tokenEditActive: false,
 	}
 	m.RefreshLocalVersion()
 	m.RefreshBackupStatus()
@@ -250,7 +261,36 @@ func (m *LifecycleModel) ReadUpdateChan(ch chan updateMsg) tea.Cmd {
 }
 
 func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
+	if m.tokenEditActive {
+		var cmd tea.Cmd
+		m.tokenInput, cmd = m.tokenInput.Update(msg)
+
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter":
+				m.config.HFToken = strings.TrimSpace(m.tokenInput.Value())
+				_ = m.config.Save()
+				m.tokenInput.Blur()
+				m.tokenEditActive = false
+			case "esc":
+				m.tokenInput.Blur()
+				m.tokenEditActive = false
+			}
+		}
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "t", "T":
+			m.tokenEditActive = true
+			m.tokenInput.Focus()
+			m.tokenInput.SetValue(m.config.HFToken)
+			return m, nil
+		}
+
 	case updateMsg:
 		m.state = msg.state
 		if msg.err != nil {
@@ -283,9 +323,39 @@ func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 	return m, nil
 }
 
+func maskToken(token string) string {
+	if token == "" {
+		return lipgloss.NewStyle().Foreground(ColorMuted).Render("Not Configured")
+	}
+	if len(token) <= 10 {
+		return "********"
+	}
+	return token[:5] + "..." + token[len(token)-5:]
+}
+
 func (m *LifecycleModel) View(width int, height int) string {
 	m.width = width
 	m.height = height
+
+	if m.tokenEditActive {
+		var sb strings.Builder
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("CONFIGURE HUGGING FACE TOKEN")))
+		sb.WriteString("  Please enter or paste your Hugging Face API token (HF_TOKEN).\n")
+		sb.WriteString("  This token is used for downloading gated/private models and avoiding API limits.\n\n")
+		sb.WriteString("  " + m.tokenInput.View() + "\n\n")
+		sb.WriteString("  " + StyleHelpKey.Render("[Enter]") + " Save Token  " + StyleHelpKey.Render("[Esc]") + " Cancel / Exit\n")
+
+		boxWidth := width - 4
+		if boxWidth < 50 {
+			boxWidth = 50
+		}
+		return lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(ColorPrimary).
+			Width(boxWidth).
+			Render(sb.String())
+	}
 
 	var sb strings.Builder
 	sb.WriteString("\n")
@@ -309,7 +379,10 @@ func (m *LifecycleModel) View(width int, height int) string {
 	if m.hasBackup {
 		backupStr = StyleSuccess.Render("Available (llama.cpp.backup/)")
 	}
-	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "Local Backup:", backupStr))
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Local Backup:", backupStr))
+
+	tokenStr := maskToken(m.config.HFToken)
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "HF Token:", tokenStr))
 
 	// Hardware Spec Match Info
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Target Platform Match:") + "\n")
@@ -366,6 +439,7 @@ func (m *LifecycleModel) View(width int, height int) string {
 		if m.hasBackup {
 			helpKeys = append(helpKeys, fmt.Sprintf("%s Rollback to Backup", StyleHelpKey.Render("[R]")))
 		}
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Configure Token", StyleHelpKey.Render("[T]")))
 	}
 	helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 
