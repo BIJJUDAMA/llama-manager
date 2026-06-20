@@ -1,75 +1,104 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
+// loadWithDir loads config rooted at dir, bypassing the platform AppDataDir.
+func loadWithDir(dir string) (*Config, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+
+	configPath := filepath.Join(dir, configFileName)
+
+	var cfg *Config
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		cfg = defaultConfig(dir)
+		if err := cfg.Save(); err != nil {
+			return nil, err
+		}
+	} else {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, err
+		}
+		cfg = defaultConfig(dir)
+		_ = json.Unmarshal(data, cfg)
+	}
+
+	cfg.configPath = configPath
+
+	if cfg.ModelProfiles == nil {
+		cfg.ModelProfiles = make(map[string]string)
+	}
+	if cfg.Favorites == nil {
+		cfg.Favorites = []string{}
+	}
+	if cfg.RecentLaunches == nil {
+		cfg.RecentLaunches = []string{}
+	}
+
+	if err := cfg.CreateDirectories(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
 func TestConfigLoadAndSave(t *testing.T) {
-	// Setup a temporary directory for the test to avoid modifying the real config.json
-	tempDir, err := os.MkdirTemp("", "llama-manager-test")
+	tempDir, err := os.MkdirTemp("", "llmgr-test")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Change working directory to tempDir for the duration of the test
-	origWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get working dir: %v", err)
-	}
-	if err := os.Chdir(tempDir); err != nil {
-		t.Fatalf("failed to change working dir: %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(origWD)
-	}()
-
-	// Load configuration (should create default config and directories)
-	cfg, err := Load()
+	cfg, err := loadWithDir(tempDir)
 	if err != nil {
 		t.Fatalf("expected no error loading config, got %v", err)
 	}
 
-	// Verify paths are set to defaults
-	if cfg.Paths.Models != "models" {
-		t.Errorf("expected paths.models to be 'models', got %q", cfg.Paths.Models)
+	// Paths should be absolute and rooted under tempDir
+	expectedModels := filepath.Join(tempDir, "models")
+	if cfg.Paths.Models != expectedModels {
+		t.Errorf("expected paths.models to be %q, got %q", expectedModels, cfg.Paths.Models)
 	}
 
-	// Verify directories are created
-	expectedDirs := []string{"models", "llama.cpp", "profiles", "cache", "benchmarks", "downloads"}
-	for _, dir := range expectedDirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			t.Errorf("expected directory %q to be created, but it was not", dir)
+	// All data directories should have been created under tempDir
+	for _, sub := range []string{"models", "llama.cpp", "profiles", "cache", "benchmarks", "downloads"} {
+		full := filepath.Join(tempDir, sub)
+		if _, err := os.Stat(full); os.IsNotExist(err) {
+			t.Errorf("expected directory %q to be created, but it was not", full)
 		}
 	}
 
-	// Modify config and save
+	// Modify and save
 	cfg.Theme = "light"
 	cfg.Favorites = append(cfg.Favorites, "test-model")
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("failed to save config: %v", err)
 	}
 
-	// Reload config and verify changes
-	reloadedCfg, err := Load()
+	// Reload and verify
+	reloaded, err := loadWithDir(tempDir)
 	if err != nil {
 		t.Fatalf("failed to reload config: %v", err)
 	}
-
-	if reloadedCfg.Theme != "light" {
-		t.Errorf("expected theme to be 'light', got %q", reloadedCfg.Theme)
+	if reloaded.Theme != "light" {
+		t.Errorf("expected theme to be 'light', got %q", reloaded.Theme)
 	}
-
-	if len(reloadedCfg.Favorites) != 1 || reloadedCfg.Favorites[0] != "test-model" {
-		t.Errorf("expected favorites to contain 'test-model', got %v", reloadedCfg.Favorites)
+	if len(reloaded.Favorites) != 1 || reloaded.Favorites[0] != "test-model" {
+		t.Errorf("expected favorites to contain 'test-model', got %v", reloaded.Favorites)
 	}
 }
 
 func TestConfigHelpers(t *testing.T) {
-	cfg := DefaultConfig()
+	cfg := defaultConfig("")
 
-	// Test Favorites helper methods
+	// Favorites
 	modelPath := "models/Qwen/qwen2.5.gguf"
 	if cfg.IsFavorite(modelPath) {
 		t.Errorf("expected model to not be favorite initially")
@@ -83,21 +112,18 @@ func TestConfigHelpers(t *testing.T) {
 		t.Errorf("expected model to not be favorite after toggling again")
 	}
 
-	// Test Recent Launches helper methods (max 5, prepends)
-	models := []string{"m1", "m2", "m3", "m4", "m5", "m6"}
-	for _, m := range models {
+	// RecentLaunches capped at 5
+	for _, m := range []string{"m1", "m2", "m3", "m4", "m5", "m6"} {
 		cfg.RecordLaunch(m)
 	}
 	if len(cfg.RecentLaunches) != 5 {
-		t.Errorf("expected RecentLaunches count to be capped at 5, got %d", len(cfg.RecentLaunches))
+		t.Errorf("expected RecentLaunches capped at 5, got %d", len(cfg.RecentLaunches))
 	}
-	// "m6" was launched last, so it should be at index 0. "m1" should be discarded.
 	if cfg.RecentLaunches[0] != "m6" {
 		t.Errorf("expected most recent launch to be 'm6', got %q", cfg.RecentLaunches[0])
 	}
-	cfg.RecordLaunch("m3") // Move m3 to top
+	cfg.RecordLaunch("m3")
 	if cfg.RecentLaunches[0] != "m3" {
-		t.Errorf("expected 'm3' to move to top after recording launch again, got %q", cfg.RecentLaunches[0])
+		t.Errorf("expected 'm3' to move to top, got %q", cfg.RecentLaunches[0])
 	}
 }
-

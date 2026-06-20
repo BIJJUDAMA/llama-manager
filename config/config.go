@@ -2,8 +2,35 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 )
+
+// AppDataDir returns the fixed directory where llmgr stores all its data.
+// Each supported platform places data in its conventional location.
+func AppDataDir() (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return "", fmt.Errorf("could not determine config directory: %w", err)
+		}
+		return filepath.Join(base, "llmgr"), nil
+
+	case "linux":
+		// TODO: implement XDG_DATA_HOME (~/.local/share/llmgr) for Linux
+		return "", fmt.Errorf("linux app data directory not yet implemented")
+
+	case "darwin":
+		// TODO: implement ~/Library/Application Support/llmgr for macOS
+		return "", fmt.Errorf("macOS app data directory not yet implemented")
+
+	default:
+		return "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+}
 
 type Paths struct {
 	Models     string `json:"models"`
@@ -23,30 +50,47 @@ type Config struct {
 	ModelProfiles       map[string]string `json:"model_profiles"`
 	HFToken             string            `json:"hf_token"`
 	OnboardingCompleted bool              `json:"onboarding_completed"`
+
+	// configPath is the resolved path to config.json on disk.
+	// It is not serialised to JSON.
+	configPath string
 }
 
-const ConfigFileName = "config.json"
+const configFileName = "config.json"
 
-// Load loads the configuration from file, or creates a default one if it doesn't exist.
+// Load reads the configuration from the platform app data directory,
+// creating it with defaults if it does not exist.
 func Load() (*Config, error) {
+	dir, err := AppDataDir()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("could not create app data directory: %w", err)
+	}
+
+	configPath := filepath.Join(dir, configFileName)
+
 	var cfg *Config
-	if _, err := os.Stat(ConfigFileName); os.IsNotExist(err) {
-		cfg = DefaultConfig()
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		cfg = defaultConfig(dir)
 		if err := cfg.Save(); err != nil {
 			return nil, err
 		}
 	} else {
-		data, err := os.ReadFile(ConfigFileName)
+		data, err := os.ReadFile(configPath)
 		if err != nil {
 			return nil, err
 		}
 		cfg = &Config{}
 		if err := json.Unmarshal(data, cfg); err != nil {
-			// If JSON is malformed, fallback to default
-			cfg = DefaultConfig()
+			cfg = defaultConfig(dir)
 			_ = cfg.Save()
 		}
 	}
+
+	cfg.configPath = configPath
 
 	if cfg.ModelProfiles == nil {
 		cfg.ModelProfiles = make(map[string]string)
@@ -58,7 +102,6 @@ func Load() (*Config, error) {
 		cfg.RecentLaunches = []string{}
 	}
 
-	// Ensure all directories specified in Paths exist
 	if err := cfg.CreateDirectories(); err != nil {
 		return nil, err
 	}
@@ -66,15 +109,28 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// DefaultConfig returns a Config with default values rooted at the platform
+// app data directory. Exported so it can be used in tests and tooling.
 func DefaultConfig() *Config {
+	dir, err := AppDataDir()
+	if err != nil {
+		// Fallback: callers that cannot resolve the platform dir get an
+		// empty-rooted config. Tests should use defaultConfig(dir) directly.
+		dir = ""
+	}
+	return defaultConfig(dir)
+}
+
+// defaultConfig returns a Config with all paths rooted at dir.
+func defaultConfig(dir string) *Config {
 	return &Config{
 		Paths: Paths{
-			Models:     "models",
-			LlamaCPP:   "llama.cpp",
-			Profiles:   "profiles",
-			Cache:      "cache",
-			Benchmarks: "benchmarks",
-			Downloads:  "downloads",
+			Models:     filepath.Join(dir, "models"),
+			LlamaCPP:   filepath.Join(dir, "llama.cpp"),
+			Profiles:   filepath.Join(dir, "profiles"),
+			Cache:      filepath.Join(dir, "cache"),
+			Benchmarks: filepath.Join(dir, "benchmarks"),
+			Downloads:  filepath.Join(dir, "downloads"),
 		},
 		Favorites:           []string{},
 		RecentLaunches:      []string{},
@@ -82,15 +138,25 @@ func DefaultConfig() *Config {
 		Theme:               "dark",
 		ModelProfiles:       make(map[string]string),
 		OnboardingCompleted: false,
+		configPath:          filepath.Join(dir, configFileName),
 	}
 }
 
+// Save writes the current configuration to disk.
 func (c *Config) Save() error {
+	if c.configPath == "" {
+		dir, err := AppDataDir()
+		if err != nil {
+			return err
+		}
+		c.configPath = filepath.Join(dir, configFileName)
+	}
+
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ConfigFileName, data, 0600)
+	return os.WriteFile(c.configPath, data, 0600)
 }
 
 func (c *Config) CreateDirectories() error {
@@ -113,7 +179,7 @@ func (c *Config) CreateDirectories() error {
 	return nil
 }
 
-// ToggleFavorite adds or removes a model path to/from Favorites.
+// ToggleFavorite adds or removes a model path from Favorites.
 func (c *Config) ToggleFavorite(modelPath string) {
 	for i, f := range c.Favorites {
 		if f == modelPath {
@@ -134,22 +200,16 @@ func (c *Config) IsFavorite(modelPath string) bool {
 	return false
 }
 
-// RecordLaunch prepends the model path to RecentLaunches, maintaining a max limit of 5 unique items.
+// RecordLaunch prepends the model path to RecentLaunches, capped at 5 unique items.
 func (c *Config) RecordLaunch(modelPath string) {
-	// Remove if already exists to move it to the top
 	for i, r := range c.RecentLaunches {
 		if r == modelPath {
 			c.RecentLaunches = append(c.RecentLaunches[:i], c.RecentLaunches[i+1:]...)
 			break
 		}
 	}
-
-	// Prepend
 	c.RecentLaunches = append([]string{modelPath}, c.RecentLaunches...)
-
-	// Limit to 5
 	if len(c.RecentLaunches) > 5 {
 		c.RecentLaunches = c.RecentLaunches[:5]
 	}
 }
-
