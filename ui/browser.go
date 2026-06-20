@@ -394,6 +394,14 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case appCheckMsg:
+		if m.lifecycleModel != nil {
+			_, cmd := m.lifecycleModel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
 	case benchmarkMsg:
 		if m.benchmarkProgress == nil {
 			break
@@ -571,6 +579,17 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd != nil {
 						cmds = append(cmds, cmd)
 					}
+				case "v", "V":
+					if !m.lifecycleModel.appChecking {
+						cmds = append(cmds, m.lifecycleModel.StartAppCheck())
+					}
+				case "n", "N":
+					// Reset onboarding tour
+					m.config.OnboardingCompleted = false
+					_ = m.config.Save()
+					m.onboardingActive = true
+					m.onboardingStep = StepWelcome
+					m.screenMode = ScreenBrowser
 				}
 			}
 		} else if m.screenMode == ScreenDownloader && m.downloaderModel != nil {

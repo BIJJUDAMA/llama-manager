@@ -91,8 +91,17 @@ func QueryLocalVersion(llamaCppDir string) (version string, commit string, build
 
 // CheckLatestRelease queries GitHub API for the latest llama.cpp release.
 func CheckLatestRelease() (*GithubRelease, error) {
+	return fetchLatestRelease("https://api.github.com/repos/ggerganov/llama.cpp/releases/latest")
+}
+
+// CheckAppRelease queries GitHub API for the latest llama-manager release.
+func CheckAppRelease() (*GithubRelease, error) {
+	return fetchLatestRelease("https://api.github.com/repos/BIJJUDAMA/llama-manager/releases/latest")
+}
+
+func fetchLatestRelease(url string) (*GithubRelease, error) {
 	client := &http.Client{Timeout: 8 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest", nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +124,7 @@ func CheckLatestRelease() (*GithubRelease, error) {
 
 	return &release, nil
 }
+
 
 // MatchAsset finds the most suitable assets (main binaries and optional cudart DLLs) for the user's OS, CPU/GPU architecture.
 func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (mainAsset *ReleaseAsset, cudartAsset *ReleaseAsset, err error) {

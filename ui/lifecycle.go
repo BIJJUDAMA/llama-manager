@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -40,24 +41,44 @@ type updateMsg struct {
 	ch       chan updateMsg
 }
 
+type appCheckMsg struct {
+	latestTag string
+	err       error
+}
+
 type LifecycleModel struct {
-	srvRunner                     *runner.ServerRunner
-	config                        *config.Config
-	specs                         *hardware.HardwareSpecs
-	state                         LifecycleState
-	localVersion                  string
-	localCommit                   string
-	localBuildInfo                string
-	latestTagName                 string
-	latestRelease                 *runner.GithubRelease
-	matchedAsset                  *runner.ReleaseAsset
-	downloadProgress              float64
-	actionMsg                     string
-	err                           error
-	hasBackup                     bool
-	width, height                 int
-	tokenInput                    textinput.Model
-	tokenEditActive               bool
+	srvRunner        *runner.ServerRunner
+	config           *config.Config
+	specs            *hardware.HardwareSpecs
+	state            LifecycleState
+	localVersion     string
+	localCommit      string
+	localBuildInfo   string
+	latestTagName    string
+	latestRelease    *runner.GithubRelease
+	matchedAsset     *runner.ReleaseAsset
+	downloadProgress float64
+	actionMsg        string
+	err              error
+	hasBackup        bool
+	width, height    int
+	tokenInput       textinput.Model
+	tokenEditActive  bool
+	// App self-update fields
+	appVersion      string
+	appLatestTag    string
+	appCheckErr     error
+	appChecking     bool
+}
+
+func resolveAppVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		v := info.Main.Version
+		if v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return "dev"
 }
 
 func NewLifecycleModel(cfg *config.Config, srv *runner.ServerRunner) *LifecycleModel {
@@ -79,10 +100,24 @@ func NewLifecycleModel(cfg *config.Config, srv *runner.ServerRunner) *LifecycleM
 		state:           StateIdle,
 		tokenInput:      ti,
 		tokenEditActive: false,
+		appVersion:      resolveAppVersion(),
 	}
 	m.RefreshLocalVersion()
 	m.RefreshBackupStatus()
 	return m
+}
+
+// StartAppCheck queries GitHub for the latest llama-manager release tag.
+func (m *LifecycleModel) StartAppCheck() tea.Cmd {
+	m.appChecking = true
+	m.appCheckErr = nil
+	return func() tea.Msg {
+		rel, err := runner.CheckAppRelease()
+		if err != nil {
+			return appCheckMsg{err: err}
+		}
+		return appCheckMsg{latestTag: rel.TagName}
+	}
 }
 
 func (m *LifecycleModel) RefreshLocalVersion() {
@@ -328,6 +363,15 @@ func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 			return m, nil
 		}
 
+	case appCheckMsg:
+		m.appChecking = false
+		if msg.err != nil {
+			m.appCheckErr = msg.err
+		} else {
+			m.appCheckErr = nil
+			m.appLatestTag = msg.latestTag
+		}
+
 	case updateMsg:
 		m.state = msg.state
 		if msg.err != nil {
@@ -347,7 +391,6 @@ func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 			m.latestTagName = msg.release.TagName
 		}
 
-		// Check if we are done or failed to refresh info
 		if m.state == StateUpdateSuccess || m.state == StateRollbackSuccess || m.state == StateError {
 			m.RefreshLocalVersion()
 			m.RefreshBackupStatus()
@@ -396,10 +439,31 @@ func (m *LifecycleModel) View(width int, height int) string {
 
 	var sb strings.Builder
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("LLAMA.CPP LIFECYCLE MANAGEMENT")))
+	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("SETTINGS")))
 
-	// Current installation specs
-	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Local Installation:") + "\n")
+	// ── App Version ──────────────────────────────────────────────────────────
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Llama Manager:") + "\n")
+	appVerStr := lipgloss.NewStyle().Foreground(ColorWhite).Render(m.appVersion)
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Installed Version:", appVerStr))
+	if m.appChecking {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorMuted).Render("Checking...")))
+	} else if m.appCheckErr != nil {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", StyleDanger.Render("Check failed")))
+	} else if m.appLatestTag != "" {
+		if m.appLatestTag == m.appVersion {
+			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", StyleSuccess.Render(m.appLatestTag+" (up-to-date)")))
+		} else {
+			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(m.appLatestTag+" — update available")))
+			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Update command:",
+				lipgloss.NewStyle().Foreground(ColorMuted).Render("go install github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest")))
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorMuted).Render("Not checked  [V] to check")))
+	}
+	sb.WriteString("\n")
+
+	// ── llama.cpp Installation ───────────────────────────────────────────────
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Inference Runtime (llama.cpp):") + "\n")
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Folder Path:", m.config.Paths.LlamaCPP))
 
 	localVerStr := m.localVersion
@@ -418,71 +482,83 @@ func (m *LifecycleModel) View(width int, height int) string {
 	}
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Local Backup:", backupStr))
 
+	if m.latestTagName != "" {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorWhite).Bold(true).Render(m.latestTagName)))
+	} else {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorMuted).Render("Not checked  [C] to check")))
+	}
+	sb.WriteString("\n")
+
+	// ── Preferences ──────────────────────────────────────────────────────────
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Preferences:") + "\n")
+	themeStr := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(strings.Title(m.config.Theme))
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Color Theme:", themeStr))
 	tokenStr := maskToken(m.config.HFToken)
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "HF Token:", tokenStr))
+	onboardStr := lipgloss.NewStyle().Foreground(ColorMuted).Render("Completed")
+	if !m.config.OnboardingCompleted {
+		onboardStr = lipgloss.NewStyle().Foreground(ColorAccent).Render("Not completed")
+	}
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Onboarding Tour:", onboardStr))
+	sb.WriteString("\n")
 
-	themeStr := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(strings.Title(m.config.Theme))
-	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "Color Theme:", themeStr))
-
-	// Hardware Spec Match Info
-	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Target Platform Match:") + "\n")
+	// ── Hardware ─────────────────────────────────────────────────────────────
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Platform:") + "\n")
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Operating System:", m.specs.OS))
-	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "GPU Accelerator:", m.specs.GPU.Type))
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "GPU Accelerator:", m.specs.GPU.Type))
+	sb.WriteString("\n")
 
-	// Update checker info
-	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("GitHub Release Status:") + "\n")
-	if m.latestTagName != "" {
-		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Available:", lipgloss.NewStyle().Foreground(ColorWhite).Bold(true).Render(m.latestTagName)))
-	} else {
-		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Available:", "Not checked yet"))
+	// ── Runtime status ───────────────────────────────────────────────────────
+	if m.state != StateIdle {
+		sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Status:") + "\n")
+		statusText := ""
+		switch m.state {
+		case StateChecking:
+			statusText = "Checking latest llama.cpp release..."
+		case StateNoUpdate:
+			statusText = StyleSuccess.Render("Inference runtime is up-to-date.")
+		case StateUpdateAvailable:
+			statusText = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("llama.cpp update available — press [U] to apply.")
+		case StateDownloading:
+			statusText = fmt.Sprintf("Downloading: %s", m.actionMsg)
+		case StateExtracting:
+			statusText = fmt.Sprintf("Extracting: %s", m.actionMsg)
+		case StateVerifying:
+			statusText = "Verifying installation integrity..."
+		case StateUpdateSuccess:
+			statusText = StyleSuccess.Render("llama.cpp update completed successfully.")
+		case StateRollingBack:
+			statusText = "Rolling back to previous backup..."
+		case StateRollbackSuccess:
+			statusText = StyleSuccess.Render("Rollback completed successfully.")
+		case StateError:
+			statusText = StyleDanger.Render(fmt.Sprintf("Error: %v", m.err))
+		}
+		if statusText != "" {
+			sb.WriteString("    " + statusText + "\n")
+		}
+		if m.state == StateDownloading {
+			sb.WriteString("    " + renderProgressBar(width-8, m.downloadProgress) + "\n")
+		}
+		sb.WriteString("\n")
 	}
 
-	// Dynamic status display
-	sb.WriteString("\n  " + lipgloss.NewStyle().Bold(true).Render("Status:") + "\n")
-	statusText := "Idle"
-	switch m.state {
-	case StateChecking:
-		statusText = "Checking latest release..."
-	case StateNoUpdate:
-		statusText = StyleSuccess.Render("Inference runtime is up-to-date.")
-	case StateUpdateAvailable:
-		statusText = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("Update available!")
-	case StateDownloading:
-		statusText = fmt.Sprintf("Downloading release: %s", m.actionMsg)
-	case StateExtracting:
-		statusText = fmt.Sprintf("Extracting files: %s", m.actionMsg)
-	case StateVerifying:
-		statusText = "Verifying installation integrity..."
-	case StateUpdateSuccess:
-		statusText = StyleSuccess.Render("Update completed successfully!")
-	case StateRollingBack:
-		statusText = "Rolling back to previous backup..."
-	case StateRollbackSuccess:
-		statusText = StyleSuccess.Render("Rollback completed successfully!")
-	case StateError:
-		statusText = StyleDanger.Render(fmt.Sprintf("Error: %v", m.err))
-	}
-	sb.WriteString("    " + statusText + "\n\n")
-
-	// Render Progress Bar if downloading
-	if m.state == StateDownloading {
-		sb.WriteString("    " + renderProgressBar(width-8, m.downloadProgress) + "\n\n")
-	}
-
-	// Instructions help footer
+	// ── Help footer ───────────────────────────────────────────────────────────
 	var helpKeys []string
 	if m.state != StateDownloading && m.state != StateExtracting && m.state != StateVerifying && m.state != StateRollingBack {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Check llama.cpp", StyleHelpKey.Render("[C]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Check App", StyleHelpKey.Render("[V]")))
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Cycle Theme", StyleHelpKey.Render("[O]")))
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Check Updates", StyleHelpKey.Render("[C]")))
 		if m.latestTagName != "" {
-			helpKeys = append(helpKeys, fmt.Sprintf("%s Apply Update", StyleHelpKey.Render("[U]")))
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Apply llama.cpp Update", StyleHelpKey.Render("[U]")))
 		}
 		if m.hasBackup {
-			helpKeys = append(helpKeys, fmt.Sprintf("%s Rollback to Backup", StyleHelpKey.Render("[R]")))
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Rollback", StyleHelpKey.Render("[R]")))
 		}
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Configure Token", StyleHelpKey.Render("[T]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s HF Token", StyleHelpKey.Render("[T]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Reset Tour", StyleHelpKey.Render("[N]")))
 	}
-	helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
+	helpKeys = append(helpKeys, fmt.Sprintf("%s Back", StyleHelpKey.Render("[Esc]")))
 
 	sb.WriteString("  " + strings.Join(helpKeys, " │ ") + "\n")
 
