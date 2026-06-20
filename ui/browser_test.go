@@ -250,5 +250,117 @@ func TestBrowserDownloaderTrigger(t *testing.T) {
 	}
 }
 
+func TestBrowserTagsAndNotes(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Add mock GGUF models
+	bm.models = []*model.GGUFMetadata{
+		{Name: "Qwen 2.5", FilePath: "models/qwen2.5.gguf"},
+		{Name: "Gemma 2", FilePath: "models/gemma2.gguf"},
+	}
+	bm.filterModels()
+	bm.selected = 1 // select "Qwen 2.5" (Index 0 is ALL MODELS header, Index 1 is Qwen 2.5)
+
+	// Test Tag Editor Activation
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenTagsEditor {
+		t.Errorf("expected screenMode to transition to ScreenTagsEditor, got %d", bm.screenMode)
+	}
+	if bm.editorModel == nil {
+		t.Errorf("expected editorModel to be initialized")
+	}
+
+	// Simulate entering tags "Coding, Reasoning"
+	for _, char := range "Coding, Reasoning" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Save tags
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenBrowser {
+		t.Errorf("expected screenMode to transition back to ScreenBrowser, got %d", bm.screenMode)
+	}
+
+	savedTags := bm.config.ModelTags["models/qwen2.5.gguf"]
+	if len(savedTags) != 2 || savedTags[0] != "Coding" || savedTags[1] != "Reasoning" {
+		t.Errorf("expected saved tags to be ['Coding', 'Reasoning'], got %v", savedTags)
+	}
+
+	// Test Note Editor Activation
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenNotesEditor {
+		t.Errorf("expected screenMode to transition to ScreenNotesEditor, got %d", bm.screenMode)
+	}
+
+	// Simulate entering notes
+	for _, char := range "This is a note." {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Save notes via Ctrl+S
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyCtrlS, Runes: []rune{'s'}})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenBrowser {
+		t.Errorf("expected screenMode to transition back to ScreenBrowser after saving notes, got %d", bm.screenMode)
+	}
+
+	savedNotes := bm.config.GetNotes("models/qwen2.5.gguf")
+	if savedNotes != "This is a note." {
+		t.Errorf("expected saved notes to be 'This is a note.', got %q", savedNotes)
+	}
+
+	// Test Tag-based Search Filtering
+	// 1. Search for "#coding"
+	bm.searchActive = true
+	bm.searchInput.Focus()
+	bm.searchInput.SetValue("#coding")
+	bm.filterModels()
+
+	if len(bm.filtered) != 1 || bm.filtered[0] != 0 {
+		t.Errorf("expected 1 filtered model matching #coding, got %v", bm.filtered)
+	}
+
+	// 2. Search for "tag:reasoning"
+	bm.searchInput.SetValue("tag:reasoning")
+	bm.filterModels()
+
+	if len(bm.filtered) != 1 || bm.filtered[0] != 0 {
+		t.Errorf("expected 1 filtered model matching tag:reasoning, got %v", bm.filtered)
+	}
+
+	// 3. Search for a tag that doesn't exist
+	bm.searchInput.SetValue("#moe")
+	bm.filterModels()
+
+	if len(bm.filtered) != 0 {
+		t.Errorf("expected 0 filtered models matching #moe, got %v", bm.filtered)
+	}
+}
+
+
 
 
