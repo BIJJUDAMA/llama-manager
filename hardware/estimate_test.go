@@ -120,3 +120,36 @@ func TestEstimateMemoryDedicated(t *testing.T) {
 		t.Errorf("expected Exceeds suitability, got %d. Reason: %s", est3.Suitability, est3.Reason)
 	}
 }
+
+func TestEstimateMemoryHeadDim(t *testing.T) {
+	specs := &HardwareSpecs{
+		OS:        "Windows",
+		IsUnified: false,
+		RAM: RAMSpecs{
+			Total:     16 * 1024 * 1024 * 1024,
+			Available: 12 * 1024 * 1024 * 1024,
+		},
+		GPU: GPUSpecs{
+			Name: "NVIDIA GeForce RTX 4050",
+			VRAM: 6 * 1024 * 1024 * 1024,
+		},
+	}
+
+	// Gemma 4 12B representation with HeadDim = 160
+	meta := &model.GGUFMetadata{
+		FileSize:     7 * 1024 * 1024 * 1024, // 7 GB
+		Layers:       46,
+		Heads:        16,
+		HeadsKV:      4,
+		EmbeddingLen: 2560,
+		HeadDim:      160,
+	}
+
+	// 4 * 46 * 4 * 160 * 131072 = 15,466,496 * 256 = 3,959,422,976 bytes (~3.69 GB)
+	est := EstimateMemory(meta, specs, 131072)
+	expectedKVCache := uint64(4) * 46 * 4 * 160 * 131072
+	if est.KVCacheSize != expectedKVCache {
+		t.Errorf("expected KV cache size to be %d, got %d", expectedKVCache, est.KVCacheSize)
+	}
+}
+

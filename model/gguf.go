@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type GGUFMetadata struct {
@@ -20,6 +21,7 @@ type GGUFMetadata struct {
 	Heads         uint32
 	HeadsKV       uint32
 	EmbeddingLen  uint32
+	HeadDim       uint32
 }
 
 // ValueType is the GGUF metadata value type enum
@@ -243,11 +245,65 @@ func ParseGGUF(filePath string) (*GGUFMetadata, error) {
 		if embed, ok := rawKvs[embedKey]; ok {
 			meta.EmbeddingLen = toUint32(embed)
 		}
-
-		// Default HeadsKV to Heads if not explicitly defined
-		if meta.HeadsKV == 0 {
-			meta.HeadsKV = meta.Heads
+		headDimKey := fmt.Sprintf("%s.attention.key_length", meta.Architecture)
+		if hd, ok := rawKvs[headDimKey]; ok {
+			meta.HeadDim = toUint32(hd)
 		}
+	}
+
+	// Fallback suffix matching for architectures that mismatch general.architecture
+	if meta.ContextLength == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".context_length") {
+				meta.ContextLength = toUint32(v)
+				break
+			}
+		}
+	}
+	if meta.Layers == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".block_count") {
+				meta.Layers = toUint32(v)
+				break
+			}
+		}
+	}
+	if meta.Heads == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".attention.head_count") {
+				meta.Heads = toUint32(v)
+				break
+			}
+		}
+	}
+	if meta.HeadsKV == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".attention.head_count_kv") {
+				meta.HeadsKV = toUint32(v)
+				break
+			}
+		}
+	}
+	if meta.EmbeddingLen == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".embedding_length") {
+				meta.EmbeddingLen = toUint32(v)
+				break
+			}
+		}
+	}
+	if meta.HeadDim == 0 {
+		for k, v := range rawKvs {
+			if strings.HasSuffix(k, ".attention.key_length") || strings.HasSuffix(k, ".attention.head_dim") {
+				meta.HeadDim = toUint32(v)
+				break
+			}
+		}
+	}
+
+	// Default HeadsKV to Heads if not explicitly defined
+	if meta.HeadsKV == 0 {
+		meta.HeadsKV = meta.Heads
 	}
 
 	// Param count

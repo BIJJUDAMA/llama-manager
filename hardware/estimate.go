@@ -50,9 +50,12 @@ func EstimateMemory(meta *model.GGUFMetadata, specs *HardwareSpecs, contextLengt
 		embedLen = 4096
 	}
 
-	headDim := embedLen / heads
+	headDim := meta.HeadDim
 	if headDim == 0 {
-		headDim = 128 // default fallback
+		headDim = embedLen / heads
+		if headDim == 0 {
+			headDim = 128 // default fallback
+		}
 	}
 
 	// KV Cache Size: 4 bytes per token context: 2 bytes for key, 2 bytes for value per layer element
