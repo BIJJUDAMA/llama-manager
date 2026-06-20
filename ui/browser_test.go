@@ -387,15 +387,9 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 		t.Fatalf("expected screenMode to be ScreenDownloader, got %d", bm.screenMode)
 	}
 
-	// 2. Change focus to trigger custom link input: first we need to move out of FocusSearch to allow 'l' key
-	bm.downloaderModel.focus = FocusQueue
-
-	// Press 'l' to toggle direct URL mode
-	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
-	bm = m.(*BrowserModel)
-
-	if !bm.downloaderModel.directURLActive || bm.downloaderModel.focus != FocusDirectURL {
-		t.Fatalf("expected direct URL mode to be active, got active=%t, focus=%d", bm.downloaderModel.directURLActive, bm.downloaderModel.focus)
+	// 2. By default, focus starts on FocusURL in our simplified downloader.
+	if bm.downloaderModel.focus != FocusURL {
+		t.Fatalf("expected initial focus to be FocusURL, got %d", bm.downloaderModel.focus)
 	}
 
 	// 3. Type URL: "http://example.com/models/test-model.gguf"
@@ -408,8 +402,8 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
 	bm = m.(*BrowserModel)
 
-	if bm.downloaderModel.directURLFocus != 1 {
-		t.Errorf("expected focus to switch to filename input, got focus index %d", bm.downloaderModel.directURLFocus)
+	if bm.downloaderModel.focus != FocusFilename {
+		t.Errorf("expected focus to switch to FocusFilename, got focus %d", bm.downloaderModel.focus)
 	}
 
 	// Type custom filename: "custom-name.gguf"
@@ -422,9 +416,9 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	bm = m.(*BrowserModel)
 
-	// Focus should return to queue, directURLActive should be false
-	if bm.downloaderModel.directURLActive {
-		t.Errorf("expected direct URL active mode to turn off after submission")
+	// Focus should return to FocusURL
+	if bm.downloaderModel.focus != FocusURL {
+		t.Errorf("expected focus to return to FocusURL after submission, got %d", bm.downloaderModel.focus)
 	}
 
 	tasks := bm.downloadQueue.GetTasks()

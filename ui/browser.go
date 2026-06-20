@@ -522,13 +522,10 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.screenMode == ScreenDownloader && m.downloaderModel != nil {
 			switch msg.String() {
 			case "esc":
-				if m.downloaderModel.focus == FocusSearch {
-					m.downloaderModel.focus = FocusRepos
-					m.downloaderModel.searchInput.Blur()
-				} else {
-					m.screenMode = ScreenBrowser
-					m.rebuildSidebar()
-				}
+				m.downloaderModel.urlInput.Blur()
+				m.downloaderModel.filenameInput.Blur()
+				m.screenMode = ScreenBrowser
+				m.rebuildSidebar()
 			default:
 				_, cmd := m.downloaderModel.Update(msg)
 				if cmd != nil {
@@ -645,8 +642,8 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
 
 			case "d", "D":
-				m.downloaderModel.focus = FocusSearch
-				m.downloaderModel.searchInput.Focus()
+				m.downloaderModel.focus = FocusURL
+				m.downloaderModel.urlInput.Focus()
 				m.screenMode = ScreenDownloader
 
 			case "space", "enter":
