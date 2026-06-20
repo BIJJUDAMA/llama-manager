@@ -45,6 +45,15 @@ func DefaultProfiles() []*Profile {
 			Port:      8080,
 		},
 		{
+			Name:      "8K Context",
+			Context:   8192,
+			Threads:   threads,
+			GPULayers: 999,
+			BatchSize: 512,
+			Host:      "127.0.0.1",
+			Port:      8080,
+		},
+		{
 			Name:      "Long Context",
 			Context:   16384,
 			Threads:   threads,
@@ -72,6 +81,19 @@ func LoadAll(profilesDir string) ([]*Profile, error) {
 		return nil, err
 	}
 
+	// Always ensure default profiles exist in the folder
+	defaults := DefaultProfiles()
+	for _, p := range defaults {
+		fileName := strings.ReplaceAll(strings.ToLower(p.Name), " ", "_") + ".json"
+		filePath := filepath.Join(profilesDir, fileName)
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			data, err := json.MarshalIndent(p, "", "  ")
+			if err == nil {
+				_ = os.WriteFile(filePath, data, 0644)
+			}
+		}
+	}
+
 	files, err := os.ReadDir(profilesDir)
 	if err != nil {
 		return nil, err
@@ -89,19 +111,6 @@ func LoadAll(profilesDir string) ([]*Profile, error) {
 			if err := json.Unmarshal(data, &p); err == nil {
 				profiles = append(profiles, &p)
 			}
-		}
-	}
-
-	if len(profiles) == 0 {
-		defaults := DefaultProfiles()
-		for _, p := range defaults {
-			fileName := strings.ReplaceAll(strings.ToLower(p.Name), " ", "_") + ".json"
-			filePath := filepath.Join(profilesDir, fileName)
-			data, err := json.MarshalIndent(p, "", "  ")
-			if err == nil {
-				_ = os.WriteFile(filePath, data, 0644)
-			}
-			profiles = append(profiles, p)
 		}
 	}
 

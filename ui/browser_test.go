@@ -435,6 +435,112 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 	}
 }
 
+func TestBrowserCreateCustomProfile(t *testing.T) {
+	tempProfilesDir, err := os.MkdirTemp("", "llama-manager-profiles-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempProfilesDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Paths.Profiles = tempProfilesDir
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Set some mock models so we can enter Dashboard
+	bm.models = []*model.GGUFMetadata{
+		{
+			Name:     "Test Model",
+			FilePath: "models/test.gguf",
+		},
+	}
+	bm.rebuildSidebar()
+
+	// Select the model entry (index 1 is the model since index 0 is Section Header)
+	bm.selected = 1
+
+	// 1. Enter Dashboard by pressing Enter
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenDashboard {
+		t.Fatalf("expected screenMode to be ScreenDashboard, got %d", bm.screenMode)
+	}
+
+	// 2. Press 'P' to open Profile Creator
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenProfileCreator {
+		t.Fatalf("expected screenMode to be ScreenProfileCreator, got %d", bm.screenMode)
+	}
+
+	// 3. Type Name: "Custom-Test-Profile"
+	for _, char := range "Custom-Test-Profile" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Tab to Context size
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	// Type context size: "8192"
+	for _, char := range "8192" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Tab to GPU layers
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	// Type GPU layers: "99"
+	for _, char := range "99" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Tab to Port
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	// Type Port: "8085"
+	for _, char := range "8085" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Press Enter to save
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	// Should return to Dashboard
+	if bm.screenMode != ScreenDashboard {
+		t.Errorf("expected to return to ScreenDashboard, got %d", bm.screenMode)
+	}
+
+	// Verify profile is created and loaded
+	found := false
+	for _, p := range bm.profiles {
+		if p.Name == "Custom-Test-Profile" {
+			found = true
+			if p.Context != 8192 {
+				t.Errorf("expected context size 8192, got %d", p.Context)
+			}
+			if p.GPULayers != 99 {
+				t.Errorf("expected GPU layers 99, got %d", p.GPULayers)
+			}
+			if p.Port != 8085 {
+				t.Errorf("expected port 8085, got %d", p.Port)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("created custom profile 'Custom-Test-Profile' was not found in loaded profiles")
+	}
+}
+
 
 
 

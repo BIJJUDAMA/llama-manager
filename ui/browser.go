@@ -40,6 +40,7 @@ const (
 	ScreenDownloader
 	ScreenTagsEditor
 	ScreenNotesEditor
+	ScreenProfileCreator
 )
 
 type SidebarItemType int
@@ -89,6 +90,7 @@ type BrowserModel struct {
 	lifecycleModel      *LifecycleModel
 	downloaderModel     *DownloaderModel
 	downloadQueue       *model.DownloadQueue
+	profileCreatorModel *ProfileCreatorModel
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -290,6 +292,33 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
+		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
+			cmd, done, saved := m.profileCreatorModel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if done {
+				m.screenMode = ScreenDashboard
+				m.profileCreatorModel = nil
+				if saved {
+					// Reload profiles from config paths
+					profs, err := profile.LoadAll(m.config.Paths.Profiles)
+					if err == nil {
+						m.profiles = profs
+						// Re-initialize dashboard with the newly added profile selected
+						if m.dashboard != nil {
+							m.dashboard.Profiles = profs
+							// Select the newly added profile (which is the last one)
+							m.dashboard.ActiveIdx = len(profs) - 1
+						}
+					}
+				}
+			}
+			return m, tea.Batch(cmds...)
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -414,6 +443,9 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dashboard.CycleProfile(1)
 			case "esc", "c", "C":
 				m.screenMode = ScreenBrowser
+			case "p", "P":
+				m.profileCreatorModel = NewProfileCreatorModel(m.config.Paths.Profiles)
+				m.screenMode = ScreenProfileCreator
 			case "enter", "y", "Y":
 				p := m.dashboard.ActiveProfile()
 				if p != nil {
@@ -1061,6 +1093,11 @@ func (m *BrowserModel) View() string {
 	if m.screenMode == ScreenDownloader && m.downloaderModel != nil {
 		downView := m.downloaderModel.View(m.width, m.height)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, downView)
+	}
+
+	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
+		creatorView := m.profileCreatorModel.View(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, creatorView)
 	}
 
 	totalWidth := m.width

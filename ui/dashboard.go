@@ -119,9 +119,10 @@ func (d *DashboardModel) View(width int, height int) string {
 	sb.WriteString(fmt.Sprintf("  %s\n  %s\n\n", lipgloss.NewStyle().Bold(true).Render("Launch Command Preview:"), wrappedCmd))
 
 	// Help prompts
-	helpStr := fmt.Sprintf("%s Launch  %s Cycle profiles  %s Cancel",
+	helpStr := fmt.Sprintf("%s Launch  %s Cycle profiles  %s Create profile  %s Cancel",
 		StyleHelpKey.Render("[Enter/Y]"),
 		StyleHelpKey.Render("[Left/Right]"),
+		StyleHelpKey.Render("[P]"),
 		StyleHelpKey.Render("[Esc/C]"),
 	)
 	sb.WriteString("  " + helpStr + "\n")

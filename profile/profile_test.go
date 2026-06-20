@@ -20,8 +20,8 @@ func TestProfileDefaultsAndLoading(t *testing.T) {
 		t.Fatalf("LoadAll failed: %v", err)
 	}
 
-	if len(profiles) != 4 {
-		t.Errorf("expected 4 default profiles, got %d", len(profiles))
+	if len(profiles) != 5 {
+		t.Errorf("expected 5 default profiles, got %d", len(profiles))
 	}
 
 	// Verify that files are written
@@ -29,8 +29,8 @@ func TestProfileDefaultsAndLoading(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read temp dir: %v", err)
 	}
-	if len(files) != 4 {
-		t.Errorf("expected 4 JSON files in directory, got %d", len(files))
+	if len(files) != 5 {
+		t.Errorf("expected 5 JSON files in directory, got %d", len(files))
 	}
 
 	// Verify custom profile loading
@@ -54,14 +54,14 @@ func TestProfileDefaultsAndLoading(t *testing.T) {
 		t.Fatalf("failed to write custom profile file: %v", err)
 	}
 
-	// Re-load all profiles (should load 4 defaults + 1 custom)
+	// Re-load all profiles (should load 5 defaults + 1 custom)
 	reloaded, err := LoadAll(tempDir)
 	if err != nil {
 		t.Fatalf("second LoadAll failed: %v", err)
 	}
 
-	if len(reloaded) != 5 {
-		t.Errorf("expected 5 profiles (4 defaults + 1 custom), got %d", len(reloaded))
+	if len(reloaded) != 6 {
+		t.Errorf("expected 6 profiles (5 defaults + 1 custom), got %d", len(reloaded))
 	}
 
 	foundCustom := false
