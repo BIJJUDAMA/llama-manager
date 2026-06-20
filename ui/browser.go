@@ -96,6 +96,7 @@ type BrowserModel struct {
 	profileCreatorModel *ProfileCreatorModel
 	onboardingActive    bool
 	onboardingStep      OnboardingStep
+	focusRight          bool
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -585,6 +586,15 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = m.srvRunner.Stop()
 				return m, tea.Quit
 
+			case "tab", "shift+tab":
+				m.focusRight = !m.focusRight
+
+			case "right", "l":
+				m.focusRight = true
+
+			case "left", "h":
+				m.focusRight = false
+
 			case "up", "k":
 				m.moveSelection(-1)
 
@@ -851,24 +861,79 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 	if m.hardwareSpecs != nil {
 		est := hardware.EstimateMemory(selectedModel, m.hardwareSpecs, 0)
 		var suitStr string
+		var suitabilityColor lipgloss.Color
 		switch est.Suitability {
 		case hardware.SuitabilityFits:
-			suitStr = StyleSuccess.Render("Fits Hardware")
+			suitStr = lipgloss.NewStyle().Background(ColorSecondary).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 1).Render(" FITS GPU ")
+			suitabilityColor = ColorSecondary
 		case hardware.SuitabilityPartial:
-			suitStr = StyleWarning.Render("Partial Offloading Expected")
+			suitStr = lipgloss.NewStyle().Background(ColorGold).Foreground(lipgloss.Color("#000000")).Bold(true).Padding(0, 1).Render(" PARTIAL ")
+			suitabilityColor = ColorGold
 		case hardware.SuitabilityExceeds:
-			suitStr = StyleDanger.Render("Exceeds Hardware limits")
+			suitStr = lipgloss.NewStyle().Background(ColorDanger).Foreground(ColorWhite).Bold(true).Padding(0, 1).Render(" EXCEEDS ")
+			suitabilityColor = ColorDanger
 		}
 
 		sb.WriteString(fmt.Sprintf("  %s\n", lipgloss.NewStyle().Bold(true).Render("Memory Suitability:")))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Status:", suitStr))
+
+		// Visual progress bars
+		if m.hardwareSpecs.IsUnified {
+			var unifiedPct float64
+			if m.hardwareSpecs.GPU.VRAM > 0 {
+				unifiedPct = (float64(est.TotalMemory) / float64(m.hardwareSpecs.GPU.VRAM)) * 100
+			}
+			bar := RenderProgressBar(unifiedPct, 15, suitabilityColor)
+			sb.WriteString(fmt.Sprintf("  %-16s %s %.0f%% (%s / %s)\n", "Unified Memory:", bar, unifiedPct, formatSize(int64(est.TotalMemory)), formatSize(int64(m.hardwareSpecs.GPU.VRAM))))
+		} else {
+			if m.hardwareSpecs.GPU.VRAM > 0 {
+				vramUsage := (est.WeightSize * uint64(est.GPUOffloadPct) / 100)
+				if est.GPUOffloadPct > 0 {
+					vramUsage += est.KVCacheSize + est.Overhead
+				}
+				if vramUsage > m.hardwareSpecs.GPU.VRAM {
+					vramUsage = m.hardwareSpecs.GPU.VRAM
+				}
+				vramPct := (float64(vramUsage) / float64(m.hardwareSpecs.GPU.VRAM)) * 100
+				barColor := ColorSecondary
+				if vramPct > 90 {
+					barColor = ColorGold
+				}
+				if est.Suitability == hardware.SuitabilityExceeds {
+					barColor = ColorDanger
+				}
+				bar := RenderProgressBar(vramPct, 15, barColor)
+				sb.WriteString(fmt.Sprintf("  %-16s %s %.0f%% (%s / %s)\n", "GPU VRAM:", bar, vramPct, formatSize(int64(vramUsage)), formatSize(int64(m.hardwareSpecs.GPU.VRAM))))
+			} else {
+				sb.WriteString(fmt.Sprintf("  %-16s %s\n", "GPU VRAM:", lipgloss.NewStyle().Foreground(ColorMuted).Render("N/A (CPU Mode)")))
+			}
+
+			if m.hardwareSpecs.RAM.Total > 0 {
+				vramUsage := (est.WeightSize * uint64(est.GPUOffloadPct) / 100)
+				if est.GPUOffloadPct > 0 {
+					vramUsage += est.KVCacheSize + est.Overhead
+				}
+				var ramUsage uint64
+				if est.TotalMemory > vramUsage {
+					ramUsage = est.TotalMemory - vramUsage
+				}
+				ramPct := (float64(ramUsage) / float64(m.hardwareSpecs.RAM.Total)) * 100
+				barColor := ColorSecondary
+				if ramPct > 80 {
+					barColor = ColorGold
+				}
+				bar := RenderProgressBar(ramPct, 15, barColor)
+				sb.WriteString(fmt.Sprintf("  %-16s %s %.0f%% (%s / %s)\n", "System RAM:", bar, ramPct, formatSize(int64(ramUsage)), formatSize(int64(m.hardwareSpecs.RAM.Total))))
+			}
+		}
+
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "KV Cache:", formatSize(int64(est.KVCacheSize))))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Overhead:", formatSize(int64(est.Overhead))))
 		sb.WriteString(fmt.Sprintf("  %-16s %s (GPU offload: %d%%)\n", "Total Memory:", formatSize(int64(est.TotalMemory)), est.GPUOffloadPct))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recommendation:", est.Reason))
 		if est.Suitability == hardware.SuitabilityExceeds {
 			sb.WriteString(fmt.Sprintf("                   %s %s\n",
-				lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("Press [Enter]"),
+				lipgloss.NewStyle().Foreground(ColorGold).Bold(true).Render("Press [Enter]"),
 				lipgloss.NewStyle().Foreground(ColorMuted).Render("to choose a profile with a smaller context length."),
 			))
 		}
@@ -878,21 +943,21 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 	}
 
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Server Status:") + " ")
-	statusText := ""
+	var statusText string
 	switch m.serverUIStatus {
 	case UIStatusStopped:
-		statusText = lipgloss.NewStyle().Foreground(ColorMuted).Render("Stopped")
+		statusText = StyleBadgeStopped.Render(" STOPPED ")
 	case UIStatusStarting:
-		statusText = lipgloss.NewStyle().Foreground(ColorAccent).Render("Starting...")
+		statusText = StyleBadgeStarting.Render(" STARTING ")
 	case UIStatusRunning:
-		statusText = lipgloss.NewStyle().Foreground(ColorSecondary).Render("Running on http://127.0.0.1:8080")
+		statusText = StyleBadgeRunning.Render(" RUNNING ") + lipgloss.NewStyle().Foreground(ColorSecondary).Render(" on http://127.0.0.1:8080")
 	case UIStatusFailed:
-		statusText = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render("Failed")
+		statusText = StyleBadgeFailed.Render(" FAILED ")
 	}
 	sb.WriteString(statusText + "\n")
 
 	if m.serverUIStatus == UIStatusFailed && m.serverErr != nil {
-		sb.WriteString(fmt.Sprintf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Render(fmt.Sprintf("Error: %v", m.serverErr))))
+		sb.WriteString(fmt.Sprintf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#FF3B30")).Render(fmt.Sprintf("Error: %v", m.serverErr))))
 	} else if m.serverUIStatus == UIStatusRunning && m.runningModelPath == selectedModel.FilePath {
 		sb.WriteString("\n  Active model is currently serving requests.\n")
 	}
@@ -1074,7 +1139,7 @@ func (m *BrowserModel) View() string {
 		}
 	}
 
-	leftPanelContent := fmt.Sprintf("%s\n%s", StyleTitle.Render("Models"), leftSb.String())
+	var leftTitle, rightTitle string
 	leftBorderColor := ColorBorder
 	rightBorderColor := ColorBorder
 
@@ -1084,7 +1149,21 @@ func (m *BrowserModel) View() string {
 		} else if m.onboardingStep == StepDetailsPanel {
 			rightBorderColor = ColorPrimary
 		}
+		leftTitle = StyleTitle.Render("Models")
+		rightTitle = StyleTitle.Render("Details")
+	} else {
+		if m.focusRight {
+			rightBorderColor = ColorPrimary
+			leftTitle = StyleTitle.Render("Models")
+			rightTitle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Padding(0, 1).Render("Details")
+		} else {
+			leftBorderColor = ColorPrimary
+			leftTitle = lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Padding(0, 1).Render("Models")
+			rightTitle = StyleTitle.Render("Details")
+		}
 	}
+
+	leftPanelContent := fmt.Sprintf("%s\n%s", leftTitle, leftSb.String())
 
 	leftView := StyleLeftPanel.Copy().
 		BorderForeground(leftBorderColor).
@@ -1092,7 +1171,7 @@ func (m *BrowserModel) View() string {
 		Height(panelHeight).
 		Render(leftPanelContent)
 
-	rightPanelContent := fmt.Sprintf("%s\n%s", StyleTitle.Render("Details"), m.rightPanelView(rightWidth, panelHeight))
+	rightPanelContent := fmt.Sprintf("%s\n%s", rightTitle, m.rightPanelView(rightWidth, panelHeight))
 	rightView := StyleRightPanel.Copy().
 		BorderForeground(rightBorderColor).
 		Width(rightWidth).
@@ -1107,18 +1186,19 @@ func (m *BrowserModel) View() string {
 	if m.searchActive {
 		footer = fmt.Sprintf("Search: %s  %s", m.searchInput.View(), StyleHelp.Render("[Esc] Clear/Exit  [Enter] Confirm"))
 	} else {
-		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Downloader  %s Search  %s Stop  %s Quit",
-			StyleHelpKey.Render("[Enter]"),
-			StyleHelpKey.Render("[F]"),
-			StyleHelpKey.Render("[B]"),
-			StyleHelpKey.Render("[V]"),
-			StyleHelpKey.Render("[M]"),
-			StyleHelpKey.Render("[U]"),
-			StyleHelpKey.Render("[D]"),
-			StyleHelpKey.Render("[/]"),
-			StyleHelpKey.Render("[S]"),
-			StyleHelpKey.Render("[Q]"),
-		)
+		footerItems := []string{
+			fmt.Sprintf("%s Launch", StyleHelpKey.Render("[Enter]")),
+			fmt.Sprintf("%s Favorite", StyleHelpKey.Render("[F]")),
+			fmt.Sprintf("%s Benchmark", StyleHelpKey.Render("[B]")),
+			fmt.Sprintf("%s Dashboard", StyleHelpKey.Render("[V]")),
+			fmt.Sprintf("%s Monitor", StyleHelpKey.Render("[M]")),
+			fmt.Sprintf("%s Settings", StyleHelpKey.Render("[U]")),
+			fmt.Sprintf("%s Downloader", StyleHelpKey.Render("[D]")),
+			fmt.Sprintf("%s Search", StyleHelpKey.Render("[/]")),
+			fmt.Sprintf("%s Stop", StyleHelpKey.Render("[S]")),
+			fmt.Sprintf("%s Quit", StyleHelpKey.Render("[Q]")),
+		}
+		footer = strings.Join(footerItems, " │ ")
 	}
 
 	bgView := lipgloss.JoinVertical(lipgloss.Left, header, mainView, StyleHelp.Render(footer))

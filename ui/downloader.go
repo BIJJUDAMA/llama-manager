@@ -232,17 +232,17 @@ func (m *DownloaderModel) View(width int, height int) string {
 			statusStr := ""
 			switch t.Status {
 			case model.StatusQueued:
-				statusStr = lipgloss.NewStyle().Foreground(ColorMuted).Render("Queued")
+				statusStr = StyleBadgeStopped.Render(" QUEUED ")
 			case model.StatusDownloading:
-				statusStr = StyleSuccess.Render(fmt.Sprintf("Downloading %.1f KB/s", t.SpeedKBps))
+				statusStr = StyleBadgeRunning.Render(" DOWNLOADING ") + fmt.Sprintf(" %.1f KB/s", t.SpeedKBps)
 			case model.StatusPaused:
-				statusStr = StyleWarning.Render("Paused")
+				statusStr = StyleBadgeStarting.Render(" PAUSED ")
 			case model.StatusCompleted:
-				statusStr = StyleSuccess.Render("Completed")
+				statusStr = StyleBadgeRunning.Render(" COMPLETED ")
 			case model.StatusFailed:
-				statusStr = StyleDanger.Render(fmt.Sprintf("Failed: %v", t.Error))
+				statusStr = StyleBadgeFailed.Render(" FAILED ") + fmt.Sprintf(": %v", t.Error)
 			case model.StatusCanceled:
-				statusStr = lipgloss.NewStyle().Foreground(ColorMuted).Render("Canceled")
+				statusStr = StyleBadgeStopped.Render(" CANCELED ")
 			}
 
 			progressFraction := 0.0
