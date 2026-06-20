@@ -964,7 +964,14 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "KV Cache:", formatSize(int64(est.KVCacheSize))))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Overhead:", formatSize(int64(est.Overhead))))
 		sb.WriteString(fmt.Sprintf("  %-16s %s (GPU offload: %d%%)\n", "Total Memory:", formatSize(int64(est.TotalMemory)), est.GPUOffloadPct))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Recommendation:", est.Reason))
+		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recommendation:", est.Reason))
+		if est.Suitability == hardware.SuitabilityExceeds {
+			sb.WriteString(fmt.Sprintf("                   %s %s\n",
+				lipgloss.NewStyle().Foreground(ColorWarning).Bold(true).Render("Press [Enter]"),
+				lipgloss.NewStyle().Foreground(ColorMuted).Render("to choose a profile with a smaller context length."),
+			))
+		}
+		sb.WriteString("\n")
 	} else {
 		sb.WriteString("  Detecting hardware requirements...\n\n")
 	}
