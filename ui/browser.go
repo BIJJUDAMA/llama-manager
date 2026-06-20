@@ -1127,7 +1127,8 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 	case UIStatusStarting:
 		statusText = StyleBadgeStarting.Render(" STARTING ")
 	case UIStatusRunning:
-		statusText = StyleBadgeRunning.Render(" RUNNING ") + lipgloss.NewStyle().Foreground(ColorSecondary).Render(" on http://127.0.0.1:8080")
+		_, _, port := m.srvRunner.GetStatus()
+		statusText = StyleBadgeRunning.Render(" RUNNING ") + lipgloss.NewStyle().Foreground(ColorSecondary).Render(fmt.Sprintf(" on http://127.0.0.1:%d", port))
 	case UIStatusFailed:
 		statusText = StyleBadgeFailed.Render(" FAILED ")
 	}

@@ -16,7 +16,7 @@ func TestRunnerBinaryNotFound(t *testing.T) {
 	runner := NewServerRunner(tempDir)
 
 	// Try to start a server with a non-existent llama.cpp dir
-	err = runner.Start(filepath.Join(tempDir, "missing-dir"), "some-model.gguf", 2048, 4, 999, 512, "127.0.0.1", 8080)
+	err = runner.Start(filepath.Join(tempDir, "missing-dir"), "some-model.gguf", 2048, 4, 999, 512, "127.0.0.1", 50505)
 	if err == nil {
 		t.Errorf("expected error starting server with missing directory, got nil")
 	}
@@ -31,7 +31,7 @@ func TestMultiInstanceTracking(t *testing.T) {
 	}
 
 	status, model, port := runner.GetStatus()
-	if status != StatusStopped || model != "" || port != 8080 {
+	if status != StatusStopped || model != "" || port != 50505 {
 		t.Errorf("incorrect stopped status values: %d, %q, %d", status, model, port)
 	}
 }

@@ -186,18 +186,18 @@ func (sr *ServerRunner) StopInstance(port int) error {
 	return nil
 }
 
-// GetStatus returns the status, running model path, and port of the primary running server (8080 or first found).
+// GetStatus returns the status, running model path, and port of the primary running server (50505 or first found).
 func (sr *ServerRunner) GetStatus() (ServerStatus, string, int) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
 	if len(sr.instances) == 0 {
-		return StatusStopped, "", 8080
+		return StatusStopped, "", 50505
 	}
 
-	// Prefer default 8080 if running
-	if inst, exists := sr.instances[8080]; exists {
-		return StatusRunning, inst.ModelPath, 8080
+	// Prefer default 50505 if running
+	if inst, exists := sr.instances[50505]; exists {
+		return StatusRunning, inst.ModelPath, 50505
 	}
 
 	// Fallback to first active one
@@ -205,7 +205,7 @@ func (sr *ServerRunner) GetStatus() (ServerStatus, string, int) {
 		return StatusRunning, inst.ModelPath, port
 	}
 
-	return StatusStopped, "", 8080
+	return StatusStopped, "", 50505
 }
 
 // GetAllInstances returns status information for all active servers.

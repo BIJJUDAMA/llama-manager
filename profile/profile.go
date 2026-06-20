@@ -33,7 +33,7 @@ func DefaultProfiles() []*Profile {
 			GPULayers: 999, // default to offload as much as possible
 			BatchSize: 512,
 			Host:      "127.0.0.1",
-			Port:      8080,
+			Port:      50505,
 		},
 		{
 			Name:      "Balanced",
@@ -42,7 +42,7 @@ func DefaultProfiles() []*Profile {
 			GPULayers: 999,
 			BatchSize: 512,
 			Host:      "127.0.0.1",
-			Port:      8080,
+			Port:      50505,
 		},
 		{
 			Name:      "High",
@@ -51,7 +51,7 @@ func DefaultProfiles() []*Profile {
 			GPULayers: 999,
 			BatchSize: 512,
 			Host:      "127.0.0.1",
-			Port:      8080,
+			Port:      50505,
 		},
 		{
 			Name:      "Long Context",
@@ -60,7 +60,7 @@ func DefaultProfiles() []*Profile {
 			GPULayers: 999,
 			BatchSize: 512,
 			Host:      "127.0.0.1",
-			Port:      8080,
+			Port:      50505,
 		},
 		{
 			Name:      "CPU",
@@ -69,7 +69,7 @@ func DefaultProfiles() []*Profile {
 			GPULayers: 0,
 			BatchSize: 512,
 			Host:      "127.0.0.1",
-			Port:      8080,
+			Port:      50505,
 		},
 	}
 }

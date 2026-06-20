@@ -42,7 +42,7 @@ func NewProfileCreatorModel(profilesDir string) *ProfileCreatorModel {
 	gpuTi.Width = 25
 
 	portTi := textinput.New()
-	portTi.Placeholder = "Server port (e.g. 8080)..."
+	portTi.Placeholder = "Server port (e.g. 50505)..."
 	portTi.CharLimit = 5
 	portTi.Width = 25
 
@@ -109,7 +109,7 @@ func (pc *ProfileCreatorModel) Update(msg tea.Msg) (tea.Cmd, bool, bool) {
 				gpuVal = g
 			}
 
-			portVal := 8080
+			portVal := 50505
 			if p, err := strconv.Atoi(strings.TrimSpace(pc.portInput.Value())); err == nil {
 				portVal = p
 			}
