@@ -1302,7 +1302,7 @@ func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.DoubleBorder()).
-		BorderForeground(ColorSecondary).
+		BorderForeground(ColorPrimary).
 		Padding(1, 2).
 		Width(boxWidth).
 		Render(sb.String())

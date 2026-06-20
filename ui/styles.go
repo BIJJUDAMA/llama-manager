@@ -56,7 +56,7 @@ var (
 
 func init() {
 	// Initialize default theme
-	ApplyTheme("dracula")
+	ApplyTheme("forest")
 }
 
 func ApplyTheme(themeName string) {

@@ -135,7 +135,7 @@ func defaultConfig(dir string) *Config {
 		Favorites:           []string{},
 		RecentLaunches:      []string{},
 		LastSelectedModel:   "",
-		Theme:               "dark",
+		Theme:               "forest",
 		ModelProfiles:       make(map[string]string),
 		OnboardingCompleted: false,
 		configPath:          filepath.Join(dir, configFileName),

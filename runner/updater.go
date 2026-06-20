@@ -96,7 +96,55 @@ func CheckLatestRelease() (*GithubRelease, error) {
 
 // CheckAppRelease queries GitHub API for the latest llama-manager release.
 func CheckAppRelease() (*GithubRelease, error) {
-	return fetchLatestRelease("https://api.github.com/repos/BIJJUDAMA/llama-manager/releases/latest")
+	rel, err := fetchLatestRelease("https://api.github.com/repos/BIJJUDAMA/llama-manager/releases/latest")
+	if err == nil {
+		return rel, nil
+	}
+
+	// Fallback to tags if releases/latest failed (e.g. 404 Not Found because there are no releases yet)
+	tags, tagErr := fetchTags("https://api.github.com/repos/BIJJUDAMA/llama-manager/tags")
+	if tagErr != nil {
+		return nil, fmt.Errorf("failed to check release (%v) and tag fallback failed (%v)", err, tagErr)
+	}
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("no releases or tags found")
+	}
+
+	// Return the latest tag as a GithubRelease
+	return &GithubRelease{
+		TagName: tags[0].Name,
+		Name:    tags[0].Name,
+	}, nil
+}
+
+type GithubTag struct {
+	Name string `json:"name"`
+}
+
+func fetchTags(url string) ([]GithubTag, error) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "llama-manager-updater")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch tags: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %s", resp.Status)
+	}
+
+	var tags []GithubTag
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return nil, err
+	}
+
+	return tags, nil
 }
 
 func fetchLatestRelease(url string) (*GithubRelease, error) {
