@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,11 +15,23 @@ import (
 )
 
 func main() {
+	// Parse command line flags
+	resetOnboarding := flag.Bool("reset-onboarding", false, "Reset and run the onboarding tour")
+	flag.Parse()
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Printf("Error loading configuration: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *resetOnboarding {
+		cfg.OnboardingCompleted = false
+		if err := cfg.Save(); err != nil {
+			fmt.Printf("Error saving configuration: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Create server runner using cache folder for logging
