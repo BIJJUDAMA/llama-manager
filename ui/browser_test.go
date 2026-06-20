@@ -447,6 +447,15 @@ func TestBrowserOnboardingTour(t *testing.T) {
 		t.Errorf("expected onboarding to go back to StepWelcome, got %d", bm.onboardingStep)
 	}
 
+	// Test that background messages like discoverMsg fall through during onboarding
+	bm.onboardingActive = true
+	bm.loading = true
+	m, _ = bm.Update(discoverMsg{models: []*model.GGUFMetadata{}})
+	bm = m.(*BrowserModel)
+	if bm.loading {
+		t.Errorf("expected discoverMsg to not be swallowed and loading to be false during onboarding")
+	}
+
 	// Skip tour
 	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	bm = m.(*BrowserModel)

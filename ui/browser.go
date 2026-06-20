@@ -285,12 +285,8 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	if m.onboardingActive {
-		switch msg := msg.(type) {
-		case tea.WindowSizeMsg:
-			m.width = msg.Width
-			m.height = msg.Height
-		case tea.KeyMsg:
-			switch msg.String() {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
 			case "enter", "space", "n", "N":
 				if m.onboardingStep == StepFinished {
 					m.onboardingActive = false
@@ -299,20 +295,17 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.onboardingStep++
 				}
-				return m, nil
 			case "p", "P", "b", "B":
 				if m.onboardingStep > StepWelcome {
 					m.onboardingStep--
 				}
-				return m, nil
 			case "esc", "q", "Q":
 				m.onboardingActive = false
 				m.config.OnboardingCompleted = true
 				_ = m.config.Save()
-				return m, nil
 			}
+			return m, nil
 		}
-		return m, nil
 	}
 
 	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
