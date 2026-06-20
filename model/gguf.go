@@ -365,6 +365,16 @@ func toUint32(v interface{}) uint32 {
 		return uint32(val)
 	case int64:
 		return uint32(val)
+	case []interface{}:
+		if len(val) == 0 {
+			return 0
+		}
+		var sum uint64
+		for _, item := range val {
+			sum += uint64(toUint32(item))
+		}
+		// Round to nearest integer to avoid underestimation
+		return uint32((float64(sum) / float64(len(val))) + 0.5)
 	}
 	return 0
 }

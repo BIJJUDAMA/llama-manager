@@ -115,3 +115,73 @@ func TestParseGGUF(t *testing.T) {
 		t.Errorf("expected embedding length to be 4096, got %d", meta.EmbeddingLen)
 	}
 }
+
+func TestParseGGUFWithArray(t *testing.T) {
+	tempFile, err := os.CreateTemp("", "mock-gguf-array-*.gguf")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	var buf bytes.Buffer
+	_, _ = buf.Write([]byte("GGUF"))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(3)) // Version 3
+	_ = binary.Write(&buf, binary.LittleEndian, uint64(0)) // Tensor count
+	_ = binary.Write(&buf, binary.LittleEndian, uint64(4)) // KV count
+
+	// KV 1: general.architecture (string)
+	writeGGUFString(&buf, "general.architecture")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(TypeString))
+	writeGGUFString(&buf, "gemma4")
+
+	// KV 2: gemma4.block_count (uint32)
+	writeGGUFString(&buf, "gemma4.block_count")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(TypeUInt32))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(48))
+
+	// KV 3: gemma4.attention.head_count (uint32)
+	writeGGUFString(&buf, "gemma4.attention.head_count")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(TypeUInt32))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(16))
+
+	// KV 4: gemma4.attention.head_count_kv (array of TypeUInt32)
+	writeGGUFString(&buf, "gemma4.attention.head_count_kv")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(TypeArray))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(TypeUInt32)) // elemType
+	_ = binary.Write(&buf, binary.LittleEndian, uint64(48))         // lenVal (uint64 for version 3)
+
+	// Write 48 values: 40 of 8s, 8 of 1s
+	for i := 0; i < 48; i++ {
+		val := uint32(8)
+		if i%6 == 5 {
+			val = uint32(1)
+		}
+		_ = binary.Write(&buf, binary.LittleEndian, val)
+	}
+
+	_, err = tempFile.Write(buf.Bytes())
+	if err != nil {
+		t.Fatalf("failed to write mock GGUF data: %v", err)
+	}
+	_ = tempFile.Close()
+
+	meta, err := ParseGGUF(tempFile.Name())
+	if err != nil {
+		t.Fatalf("failed to parse GGUF: %v", err)
+	}
+
+	if meta.Architecture != "gemma4" {
+		t.Errorf("expected architecture 'gemma4', got %q", meta.Architecture)
+	}
+	if meta.Layers != 48 {
+		t.Errorf("expected layers 48, got %d", meta.Layers)
+	}
+	if meta.Heads != 16 {
+		t.Errorf("expected heads 16, got %d", meta.Heads)
+	}
+	// Expected average of KV heads: (40*8 + 8*1) / 48 = 328/48 = 6.833 -> rounded to 7
+	if meta.HeadsKV != 7 {
+		t.Errorf("expected headsKV to be averaged to 7, got %d", meta.HeadsKV)
+	}
+}
