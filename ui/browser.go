@@ -10,12 +10,12 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/benchmark"
-	"llama-manager/config"
-	"llama-manager/hardware"
-	"llama-manager/model"
-	"llama-manager/profile"
-	"llama-manager/runner"
+	"github.com/BIJJUDAMA/llama-manager/benchmark"
+	"github.com/BIJJUDAMA/llama-manager/config"
+	"github.com/BIJJUDAMA/llama-manager/hardware"
+	"github.com/BIJJUDAMA/llama-manager/model"
+	"github.com/BIJJUDAMA/llama-manager/profile"
+	"github.com/BIJJUDAMA/llama-manager/runner"
 )
 
 type ServerUIStatus int

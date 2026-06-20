@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/benchmark"
+	"github.com/BIJJUDAMA/llama-manager/benchmark"
 )
 
 type BenchmarkProgressStep int

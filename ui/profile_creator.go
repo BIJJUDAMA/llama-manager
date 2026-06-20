@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/profile"
+	"github.com/BIJJUDAMA/llama-manager/profile"
 )
 
 type ProfileCreatorModel struct {

@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/config"
-	"llama-manager/model"
+	"github.com/BIJJUDAMA/llama-manager/config"
+	"github.com/BIJJUDAMA/llama-manager/model"
 )
 
 type DownloaderFocus int

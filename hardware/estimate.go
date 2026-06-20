@@ -2,7 +2,7 @@ package hardware
 
 import (
 	"fmt"
-	"llama-manager/model"
+	"github.com/BIJJUDAMA/llama-manager/model"
 )
 
 type Suitability int

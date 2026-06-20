@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"llama-manager/hardware"
+	"github.com/BIJJUDAMA/llama-manager/hardware"
 )
 
 func TestMatchAsset(t *testing.T) {

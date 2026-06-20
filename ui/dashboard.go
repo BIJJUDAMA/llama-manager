@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/hardware"
-	"llama-manager/model"
-	"llama-manager/profile"
+	"github.com/BIJJUDAMA/llama-manager/hardware"
+	"github.com/BIJJUDAMA/llama-manager/model"
+	"github.com/BIJJUDAMA/llama-manager/profile"
 )
 
 type DashboardModel struct {

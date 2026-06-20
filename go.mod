@@ -1,4 +1,4 @@
-module llama-manager
+module github.com/BIJJUDAMA/llama-manager
 
 go 1.26.2
 

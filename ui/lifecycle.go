@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/config"
-	"llama-manager/hardware"
-	"llama-manager/runner"
+	"github.com/BIJJUDAMA/llama-manager/config"
+	"github.com/BIJJUDAMA/llama-manager/hardware"
+	"github.com/BIJJUDAMA/llama-manager/runner"
 )
 
 type LifecycleState int

@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"llama-manager/runner"
+	"github.com/BIJJUDAMA/llama-manager/runner"
 )
 
 type MonitorModel struct {
