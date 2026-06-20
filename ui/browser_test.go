@@ -406,6 +406,58 @@ func TestBrowserCreateCustomProfile(t *testing.T) {
 	}
 }
 
+func TestBrowserOnboardingTour(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	cfg.OnboardingCompleted = false // force onboarding
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+	bm.onboardingActive = true // force onboarding in test environment
+
+	if !bm.onboardingActive {
+		t.Errorf("expected onboarding to be active initially")
+	}
+	if bm.onboardingStep != StepWelcome {
+		t.Errorf("expected onboarding to start at StepWelcome, got %d", bm.onboardingStep)
+	}
+
+	// Press Enter to advance to next step
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+	if bm.onboardingStep != StepModelSidebar {
+		t.Errorf("expected onboarding to advance to StepModelSidebar, got %d", bm.onboardingStep)
+	}
+
+	// Press 'b' to go back
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("b")})
+	bm = m.(*BrowserModel)
+	if bm.onboardingStep != StepWelcome {
+		t.Errorf("expected onboarding to go back to StepWelcome, got %d", bm.onboardingStep)
+	}
+
+	// Skip tour
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	bm = m.(*BrowserModel)
+	if bm.onboardingActive {
+		t.Errorf("expected onboarding to be deactivated after pressing Esc")
+	}
+	if !bm.config.OnboardingCompleted {
+		t.Errorf("expected OnboardingCompleted to be set to true in config")
+	}
+}
+
 
 
 

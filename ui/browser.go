@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"flag"
 	"fmt"
 	"net/http"
 	"strings"
@@ -37,6 +38,17 @@ const (
 	ScreenSettings
 	ScreenDownloader
 	ScreenProfileCreator
+)
+
+type OnboardingStep int
+
+const (
+	StepWelcome OnboardingStep = iota
+	StepModelSidebar
+	StepDetailsPanel
+	StepLaunchDashboard
+	StepDownloadLifecycle
+	StepFinished
 )
 
 type SidebarItemType int
@@ -82,6 +94,8 @@ type BrowserModel struct {
 	downloaderModel     *DownloaderModel
 	downloadQueue       *model.DownloadQueue
 	profileCreatorModel *ProfileCreatorModel
+	onboardingActive    bool
+	onboardingStep      OnboardingStep
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -104,6 +118,8 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 		lifecycleModel:      NewLifecycleModel(cfg, srv),
 		downloadQueue:       q,
 		downloaderModel:     NewDownloaderModel(cfg, q),
+		onboardingActive:    !cfg.OnboardingCompleted && flag.Lookup("test.v") == nil,
+		onboardingStep:      StepWelcome,
 	}
 }
 
@@ -267,6 +283,37 @@ func (m *BrowserModel) Init() tea.Cmd {
 
 func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	if m.onboardingActive {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter", "space", "n", "N":
+				if m.onboardingStep == StepFinished {
+					m.onboardingActive = false
+					m.config.OnboardingCompleted = true
+					_ = m.config.Save()
+				} else {
+					m.onboardingStep++
+				}
+				return m, nil
+			case "p", "P", "b", "B":
+				if m.onboardingStep > StepWelcome {
+					m.onboardingStep--
+				}
+				return m, nil
+			case "esc", "q", "Q":
+				m.onboardingActive = false
+				m.config.OnboardingCompleted = true
+				_ = m.config.Save()
+				return m, nil
+			}
+		}
+		return m, nil
+	}
 
 	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
 		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
@@ -1035,13 +1082,26 @@ func (m *BrowserModel) View() string {
 	}
 
 	leftPanelContent := fmt.Sprintf("%s\n%s", StyleTitle.Render("Models"), leftSb.String())
-	leftView := StyleLeftPanel.
+	leftBorderColor := ColorBorder
+	rightBorderColor := ColorBorder
+
+	if m.onboardingActive {
+		if m.onboardingStep == StepModelSidebar {
+			leftBorderColor = ColorPrimary
+		} else if m.onboardingStep == StepDetailsPanel {
+			rightBorderColor = ColorPrimary
+		}
+	}
+
+	leftView := StyleLeftPanel.Copy().
+		BorderForeground(leftBorderColor).
 		Width(leftWidth).
 		Height(panelHeight).
 		Render(leftPanelContent)
 
 	rightPanelContent := fmt.Sprintf("%s\n%s", StyleTitle.Render("Details"), m.rightPanelView(rightWidth, panelHeight))
-	rightView := StyleRightPanel.
+	rightView := StyleRightPanel.Copy().
+		BorderForeground(rightBorderColor).
 		Width(rightWidth).
 		Height(panelHeight).
 		Render(rightPanelContent)
@@ -1068,7 +1128,68 @@ func (m *BrowserModel) View() string {
 		)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, mainView, StyleHelp.Render(footer))
+	bgView := lipgloss.JoinVertical(lipgloss.Left, header, mainView, StyleHelp.Render(footer))
+	if m.onboardingActive {
+		onboardingOverlay := m.onboardingOverlayView(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, onboardingOverlay)
+	}
+	return bgView
+}
+
+func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+
+	var stepTitle, stepDesc string
+	switch m.onboardingStep {
+	case StepWelcome:
+		stepTitle = "Welcome to Llama Manager!"
+		stepDesc = "Llama Manager is your local AI control center.\nThis quick tour will guide you through all the core features.\n\nPress [Enter / Space] to begin, or [Esc] to skip."
+	case StepModelSidebar:
+		stepTitle = "1. Model Discovery & Sidebar"
+		stepDesc = "On the left is the Models Sidebar.\n- Models are recursively discovered under your models/ directory.\n- Navigate them using [Up / Down Arrow keys].\n- Press [F] to toggle favoriting a model for quick access."
+	case StepDetailsPanel:
+		stepTitle = "2. Model Specifications & Suitability"
+		stepDesc = "On the right is the Details Panel.\n- Here you can see parsed GGUF metadata (architecture, parameters, etc.).\n- It automatically estimates VRAM and system memory usage.\n- If a model exceeds your hardware specs, a warning is displayed."
+	case StepLaunchDashboard:
+		stepTitle = "3. Profiles & Launching"
+		stepDesc = "Press [Enter] on a selected model to open the Launch Dashboard.\n- Choose a context profile (Fast, Balanced, High, CPU, etc.).\n- View the exact llama.cpp command that will be launched.\n- Press [P] to create a custom profile."
+	case StepDownloadLifecycle:
+		stepTitle = "4. Downloader & Lifecycle Manager"
+		stepDesc = "Additional utility panels are accessible via hotkeys:\n- Press [D] to open the Downloader to pull models directly via URL.\n- Press [U] to open the Lifecycle Manager (check/apply updates or rollback backups)."
+	case StepFinished:
+		stepTitle = "Tour Completed!"
+		stepDesc = "You are all set to manage local AI models!\n\nPress [Enter / Space / Esc] to exit the tour and start exploring."
+	}
+
+	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(stepTitle)))
+	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorWhite).Render(stepDesc)))
+
+	// Navigation instructions footer
+	var navHelp string
+	if m.onboardingStep == StepWelcome {
+		navHelp = fmt.Sprintf("  %s Next  %s Skip Tour", StyleHelpKey.Render("[Enter/Space]"), StyleHelpKey.Render("[Esc]"))
+	} else if m.onboardingStep == StepFinished {
+		navHelp = fmt.Sprintf("  %s Finish Tour", StyleHelpKey.Render("[Enter/Space]"))
+	} else {
+		navHelp = fmt.Sprintf("  %s Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter/Space]"), StyleHelpKey.Render("[P/B]"), StyleHelpKey.Render("[Esc]"))
+	}
+	sb.WriteString(navHelp + "\n")
+
+	boxWidth := width - 8
+	if boxWidth < 50 {
+		boxWidth = 50
+	}
+	if boxWidth > 70 {
+		boxWidth = 70
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(ColorSecondary).
+		Padding(1, 2).
+		Width(boxWidth).
+		Render(sb.String())
 }
 
 func formatSize(bytes int64) string {

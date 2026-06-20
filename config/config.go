@@ -15,13 +15,14 @@ type Paths struct {
 }
 
 type Config struct {
-	Paths             Paths             `json:"paths"`
-	Favorites         []string          `json:"favorites"`
-	RecentLaunches    []string          `json:"recent_launches"`
-	LastSelectedModel string            `json:"last_selected_model"`
-	Theme             string            `json:"theme"`
-	ModelProfiles     map[string]string `json:"model_profiles"`
-	HFToken           string            `json:"hf_token"`
+	Paths               Paths             `json:"paths"`
+	Favorites           []string          `json:"favorites"`
+	RecentLaunches      []string          `json:"recent_launches"`
+	LastSelectedModel   string            `json:"last_selected_model"`
+	Theme               string            `json:"theme"`
+	ModelProfiles       map[string]string `json:"model_profiles"`
+	HFToken             string            `json:"hf_token"`
+	OnboardingCompleted bool              `json:"onboarding_completed"`
 }
 
 const ConfigFileName = "config.json"
@@ -75,11 +76,12 @@ func DefaultConfig() *Config {
 			Benchmarks: "benchmarks",
 			Downloads:  "downloads",
 		},
-		Favorites:         []string{},
-		RecentLaunches:    []string{},
-		LastSelectedModel: "",
-		Theme:             "dark",
-		ModelProfiles:     make(map[string]string),
+		Favorites:           []string{},
+		RecentLaunches:      []string{},
+		LastSelectedModel:   "",
+		Theme:               "dark",
+		ModelProfiles:       make(map[string]string),
+		OnboardingCompleted: false,
 	}
 }
 
