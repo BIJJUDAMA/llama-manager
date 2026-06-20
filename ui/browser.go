@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -32,14 +31,11 @@ type ScreenMode int
 const (
 	ScreenBrowser ScreenMode = iota
 	ScreenDashboard
-	ScreenCollections
 	ScreenBenchmarkProgress
 	ScreenPerformanceDashboard
 	ScreenServerMonitor
 	ScreenSettings
 	ScreenDownloader
-	ScreenTagsEditor
-	ScreenNotesEditor
 	ScreenProfileCreator
 )
 
@@ -56,8 +52,6 @@ type SidebarItem struct {
 	Label          string
 	ModelIdx       int
 	ModelPath      string
-	CollectionName string
-	Expanded       bool
 }
 
 type BrowserModel struct {
@@ -80,9 +74,6 @@ type BrowserModel struct {
 	profiles            []*profile.Profile
 	screenMode          ScreenMode
 	dashboard           *DashboardModel
-	collectionsModel    *CollectionsModel
-	editorModel         *EditorModel
-	expandedCollections map[string]bool
 	sidebarItems        []SidebarItem
 	benchmarkProgress   *BenchmarkProgressModel
 	perfDashboard       *PerformanceDashboardModel
@@ -108,7 +99,6 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 		searchInput:         ti,
 		serverUIStatus:      UIStatusStopped,
 		screenMode:          ScreenBrowser,
-		expandedCollections: make(map[string]bool),
 		sidebarItems:        []SidebarItem{},
 		monitorModel:        NewMonitorModel(srv),
 		lifecycleModel:      NewLifecycleModel(cfg, srv),
@@ -277,20 +267,6 @@ func (m *BrowserModel) Init() tea.Cmd {
 
 func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-
-	if (m.screenMode == ScreenTagsEditor || m.screenMode == ScreenNotesEditor) && m.editorModel != nil {
-		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
-			cmd, done := m.editorModel.Update(msg)
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-			if done {
-				m.screenMode = ScreenBrowser
-				m.editorModel = nil
-			}
-			return m, tea.Batch(cmds...)
-		}
-	}
 
 	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
 		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
@@ -478,24 +454,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.screenMode = ScreenBrowser
 			}
-		} else if m.screenMode == ScreenCollections && m.collectionsModel != nil {
-			switch msg.String() {
-			case "esc", "c", "C":
-				if m.collectionsModel.mode == CollectionsCreateMode {
-					cmd := m.collectionsModel.Update(msg)
-					if cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-				} else {
-					m.screenMode = ScreenBrowser
-					m.rebuildSidebar()
-				}
-			default:
-				cmd := m.collectionsModel.Update(msg)
-				if cmd != nil {
-					cmds = append(cmds, cmd)
-				}
-			}
+
 		} else if m.screenMode == ScreenBenchmarkProgress && m.benchmarkProgress != nil {
 			switch msg.String() {
 			case "esc", "enter", "c", "C":
@@ -613,35 +572,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 
-			case "c", "C":
-				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
-					item := m.sidebarItems[m.selected]
-					if item.Type == ItemModelEntry {
-						selectedModel := m.models[item.ModelIdx]
-						m.collectionsModel = NewCollectionsModel(item.ModelPath, selectedModel.Name, m.config)
-						m.screenMode = ScreenCollections
-					}
-				}
 
-			case "t", "T":
-				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
-					item := m.sidebarItems[m.selected]
-					if item.Type == ItemModelEntry {
-						selectedModel := m.models[item.ModelIdx]
-						m.editorModel = NewEditorModel(item.ModelPath, selectedModel.Name, m.config, EditorTags)
-						m.screenMode = ScreenTagsEditor
-					}
-				}
-
-			case "n", "N":
-				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
-					item := m.sidebarItems[m.selected]
-					if item.Type == ItemModelEntry {
-						selectedModel := m.models[item.ModelIdx]
-						m.editorModel = NewEditorModel(item.ModelPath, selectedModel.Name, m.config, EditorNotes)
-						m.screenMode = ScreenNotesEditor
-					}
-				}
 
 			case "b", "B":
 				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
@@ -681,10 +612,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "space", "enter":
 				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
 					item := m.sidebarItems[m.selected]
-					if item.Type == ItemFolderHeader {
-						m.expandedCollections[item.CollectionName] = !m.expandedCollections[item.CollectionName]
-						m.rebuildSidebar()
-					} else if item.Type == ItemModelEntry {
+					if item.Type == ItemModelEntry {
 						selectedModel := m.models[item.ModelIdx]
 						profName := m.config.ModelProfiles[selectedModel.FilePath]
 						if profName == "" {
@@ -709,36 +637,12 @@ func (m *BrowserModel) filterModels() {
 			m.filtered[i] = i
 		}
 	} else {
-		isTagFilter := false
-		var tagSearch string
-		if strings.HasPrefix(query, "#") {
-			isTagFilter = true
-			tagSearch = strings.TrimPrefix(query, "#")
-		} else if strings.HasPrefix(query, "tag:") {
-			isTagFilter = true
-			tagSearch = strings.TrimPrefix(query, "tag:")
-		}
-
 		m.filtered = []int{}
 		for i, mod := range m.models {
-			if isTagFilter {
-				tags := m.config.ModelTags[mod.FilePath]
-				match := false
-				for _, t := range tags {
-					if strings.Contains(strings.ToLower(t), tagSearch) {
-						match = true
-						break
-					}
-				}
-				if match {
-					m.filtered = append(m.filtered, i)
-				}
-			} else {
-				if strings.Contains(strings.ToLower(mod.Name), query) ||
-					strings.Contains(strings.ToLower(mod.Architecture), query) ||
-					strings.Contains(strings.ToLower(mod.FilePath), query) {
-					m.filtered = append(m.filtered, i)
-				}
+			if strings.Contains(strings.ToLower(mod.Name), query) ||
+				strings.Contains(strings.ToLower(mod.Architecture), query) ||
+				strings.Contains(strings.ToLower(mod.FilePath), query) {
+				m.filtered = append(m.filtered, i)
 			}
 		}
 	}
@@ -812,42 +716,7 @@ func (m *BrowserModel) rebuildSidebar() {
 		m.sidebarItems = append(m.sidebarItems, existingRecents...)
 	}
 
-	// 3. Collections
-	var colNames []string
-	for name := range m.config.Collections {
-		colNames = append(colNames, name)
-	}
-	sort.Strings(colNames)
 
-	if len(colNames) > 0 {
-		m.sidebarItems = append(m.sidebarItems, SidebarItem{Type: ItemSectionHeader, Label: "COLLECTIONS"})
-		for _, colName := range colNames {
-			expanded := m.expandedCollections[colName]
-			folderLabel := "▸ " + colName
-			if expanded {
-				folderLabel = "▾ " + colName
-			}
-			m.sidebarItems = append(m.sidebarItems, SidebarItem{
-				Type:           ItemFolderHeader,
-				Label:          folderLabel,
-				CollectionName: colName,
-				Expanded:       expanded,
-			})
-			if expanded {
-				for _, path := range m.config.Collections[colName] {
-					if idx, ok := modelPathMap[path]; ok {
-						m.sidebarItems = append(m.sidebarItems, SidebarItem{
-							Type:           ItemModelEntry,
-							Label:          "  " + m.models[idx].Name,
-							ModelIdx:       idx,
-							ModelPath:      path,
-							CollectionName: colName,
-						})
-					}
-				}
-			}
-		}
-	}
 
 	// 4. All Models
 	if len(m.models) > 0 {
@@ -919,17 +788,7 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 		return "\n  No model selected."
 	}
 	item := m.sidebarItems[m.selected]
-	if item.Type == ItemFolderHeader {
-		var count int
-		if list, ok := m.config.Collections[item.CollectionName]; ok {
-			count = len(list)
-		}
-		return fmt.Sprintf("\n  %s\n\n  Collection: %s\n  Total Models: %d\n\n  Press [Enter/Space] to expand or collapse.\n  Select models under this folder to view details.",
-			lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("FOLDER"),
-			lipgloss.NewStyle().Foreground(ColorWhite).Bold(true).Render(item.CollectionName),
-			count,
-		)
-	}
+
 	if item.Type != ItemModelEntry {
 		return "\n  No model selected."
 	}
@@ -945,37 +804,7 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Param Count:", formatParams(selectedModel.ParamCount)))
 	sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "File Size:", formatSize(selectedModel.FileSize)))
 
-	// Tags and Notes
-	tags := m.config.ModelTags[selectedModel.FilePath]
-	var tagsStr string
-	if len(tags) > 0 {
-		var formattedTags []string
-		for _, tag := range tags {
-			formattedTags = append(formattedTags, "["+tag+"]")
-		}
-		tagsStr = lipgloss.NewStyle().Foreground(ColorSecondary).Bold(true).Render(strings.Join(formattedTags, " "))
-	} else {
-		tagsStr = lipgloss.NewStyle().Foreground(ColorMuted).Render("(none) [press T to edit]")
-	}
-	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Tags:", tagsStr))
 
-	notes := m.config.GetNotes(selectedModel.FilePath)
-	var notesStr string
-	if notes != "" {
-		lines := strings.Split(notes, "\n")
-		var indentedLines []string
-		for i, line := range lines {
-			if i == 0 {
-				indentedLines = append(indentedLines, line)
-			} else {
-				indentedLines = append(indentedLines, "                 "+line)
-			}
-		}
-		notesStr = lipgloss.NewStyle().Foreground(ColorWhite).Render(strings.Join(indentedLines, "\n"))
-	} else {
-		notesStr = lipgloss.NewStyle().Foreground(ColorMuted).Render("(none) [press N to edit]")
-	}
-	sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Notes:", notesStr))
 
 
 	// Memory Estimates
@@ -1060,15 +889,7 @@ func (m *BrowserModel) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, dashView)
 	}
 
-	if m.screenMode == ScreenCollections && m.collectionsModel != nil {
-		colView := m.collectionsModel.View(m.width, m.height)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, colView)
-	}
 
-	if (m.screenMode == ScreenTagsEditor || m.screenMode == ScreenNotesEditor) && m.editorModel != nil {
-		editorView := m.editorModel.View(m.width, m.height)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, editorView)
-	}
 
 	if m.screenMode == ScreenBenchmarkProgress && m.benchmarkProgress != nil {
 		progressView := m.benchmarkProgress.View(m.width, m.height)
@@ -1233,12 +1054,9 @@ func (m *BrowserModel) View() string {
 	if m.searchActive {
 		footer = fmt.Sprintf("Search: %s  %s", m.searchInput.View(), StyleHelp.Render("[Esc] Clear/Exit  [Enter] Confirm"))
 	} else {
-		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Collections  %s Tags  %s Notes  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Downloader  %s Search  %s Stop  %s Quit",
+		footer = fmt.Sprintf("%s Launch  %s Favorite  %s Benchmark  %s Dashboard  %s Monitor  %s Settings  %s Downloader  %s Search  %s Stop  %s Quit",
 			StyleHelpKey.Render("[Enter]"),
 			StyleHelpKey.Render("[F]"),
-			StyleHelpKey.Render("[C]"),
-			StyleHelpKey.Render("[T]"),
-			StyleHelpKey.Render("[N]"),
 			StyleHelpKey.Render("[B]"),
 			StyleHelpKey.Render("[V]"),
 			StyleHelpKey.Render("[M]"),
