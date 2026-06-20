@@ -300,6 +300,63 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 	}
 }
 
+func TestBrowserDownloaderHFRepo(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// 1. Transition to Downloader screen
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	bm = m.(*BrowserModel)
+
+	// 2. Type Repo ID: "unsloth/gemma-4-E4B-it-GGUF"
+	for _, char := range "unsloth/gemma-4-E4B-it-GGUF" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Tab to switch to filename field
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	// Type filename: "gemma-4-E4B-it-Q4_K_M.gguf"
+	for _, char := range "gemma-4-E4B-it-Q4_K_M.gguf" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Press enter to queue download
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	tasks := bm.downloadQueue.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task in queue, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.FileName != "gemma-4-E4B-it-Q4_K_M.gguf" {
+		t.Errorf("expected task filename to be 'gemma-4-E4B-it-Q4_K_M.gguf', got %q", task.FileName)
+	}
+	expectedURL := "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
+	if task.URL != expectedURL {
+		t.Errorf("expected task URL to be %q, got %q", expectedURL, task.URL)
+	}
+}
+
 func TestBrowserCreateCustomProfile(t *testing.T) {
 	tempProfilesDir, err := os.MkdirTemp("", "llama-manager-profiles-test")
 	if err != nil {

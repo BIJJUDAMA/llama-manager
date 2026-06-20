@@ -65,7 +65,41 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case hfResolveMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("failed to fetch Hugging Face repo info: %v", msg.err)
+			m.focus = FocusURL
+			m.urlInput.Focus()
+		} else if len(msg.files) == 0 {
+			m.err = fmt.Errorf("no GGUF files found in repository '%s'", msg.repoID)
+			m.focus = FocusURL
+			m.urlInput.Focus()
+		} else if len(msg.files) == 1 {
+			filename := msg.files[0].Rpath
+			modelName := filename
+			if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+				modelName = modelName[:len(modelName)-5]
+			}
+			downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", msg.repoID, filename)
+			m.queue.AddTask(modelName, filename, msg.files[0].Size, downloadURL)
+			m.urlInput.SetValue("")
+			m.filenameInput.SetValue("")
+			m.focus = FocusURL
+			m.urlInput.Focus()
+			m.filenameInput.Blur()
+			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+		} else {
+			var fileList []string
+			for _, f := range msg.files {
+				fileList = append(fileList, f.Rpath)
+			}
+			m.err = fmt.Errorf("multiple GGUF files found. Please enter one of these in the filename field:\n  - %s", strings.Join(fileList, "\n  - "))
+			m.focus = FocusFilename
+			m.filenameInput.Focus()
+		}
+
 	case tea.KeyMsg:
+		m.err = nil // Clear error on key input
 		switch msg.String() {
 		case "tab":
 			m.nextFocus()
@@ -77,30 +111,70 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 				urlStr := strings.TrimSpace(m.urlInput.Value())
 				if urlStr != "" {
 					filename := strings.TrimSpace(m.filenameInput.Value())
-					if filename == "" {
-						parts := strings.Split(urlStr, "/")
-						if len(parts) > 0 {
-							filename = parts[len(parts)-1]
-							if qIdx := strings.Index(filename, "?"); qIdx != -1 {
-								filename = filename[:qIdx]
-							}
-						}
-					}
-					if filename == "" {
-						filename = "downloaded_model.gguf"
+
+					isHFRepo := false
+					repoID := urlStr
+
+					if strings.Contains(urlStr, "huggingface.co/") && !strings.Contains(urlStr, "/resolve/") {
+						isHFRepo = true
+						idx := strings.Index(repoID, "huggingface.co/")
+						repoID = repoID[idx+len("huggingface.co/"):]
+					} else if !strings.HasPrefix(urlStr, "http://") && !strings.HasPrefix(urlStr, "https://") && strings.Contains(urlStr, "/") {
+						isHFRepo = true
 					}
 
-					modelName := filename
-					if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
-						modelName = modelName[:len(modelName)-5]
+					if isHFRepo {
+						repoID = strings.Trim(repoID, "/")
+						parts := strings.Split(repoID, "/")
+						if len(parts) >= 2 {
+							repoID = parts[0] + "/" + parts[1]
+						}
+
+						if filename != "" {
+							downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repoID, filename)
+							modelName := filename
+							if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+								modelName = modelName[:len(modelName)-5]
+							}
+							m.queue.AddTask(modelName, filename, 0, downloadURL)
+							m.urlInput.SetValue("")
+							m.filenameInput.SetValue("")
+							m.focus = FocusURL
+							m.urlInput.Focus()
+							m.filenameInput.Blur()
+							m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+						} else {
+							m.urlInput.Blur()
+							m.filenameInput.Blur()
+							cmds = append(cmds, m.resolveHFRepo(repoID))
+						}
+					} else {
+						if filename == "" {
+							parts := strings.Split(urlStr, "/")
+							if len(parts) > 0 {
+								filename = parts[len(parts)-1]
+								if qIdx := strings.Index(filename, "?"); qIdx != -1 {
+									filename = filename[:qIdx]
+								}
+							}
+						}
+						if filename == "" {
+							filename = "downloaded_model.gguf"
+						}
+
+						modelName := filename
+						if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+							modelName = modelName[:len(modelName)-5]
+						}
+
+						m.queue.AddTask(modelName, filename, 0, urlStr)
+						m.urlInput.SetValue("")
+						m.filenameInput.SetValue("")
+						m.focus = FocusURL
+						m.urlInput.Focus()
+						m.filenameInput.Blur()
+						m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 					}
-					m.queue.AddTask(modelName, filename, 0, urlStr)
-					m.urlInput.SetValue("")
-					m.filenameInput.SetValue("")
-					m.focus = FocusURL
-					m.urlInput.Focus()
-					m.filenameInput.Blur()
-					m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 				}
 			}
 
@@ -207,13 +281,22 @@ func (m *DownloaderModel) View(width int, height int) string {
 		fileStyle = fileStyle.Foreground(ColorSecondary).Bold(true)
 	}
 
-	directSb.WriteString("  " + urlStyle.Render("Direct URL:") + "\n")
+	directSb.WriteString("  " + urlStyle.Render("Direct URL / Hugging Face Repository:") + "\n")
 	directSb.WriteString("  " + m.urlInput.View() + "\n\n")
-	directSb.WriteString("  " + fileStyle.Render("Destination Filename (optional):") + "\n")
+	directSb.WriteString("  " + fileStyle.Render("Destination Filename (optional/required for repositories):") + "\n")
 	directSb.WriteString("  " + m.filenameInput.View() + "\n\n")
-	directSb.WriteString("  " + StyleHelp.Render("Leave filename empty to auto-extract from URL.") + "\n")
+	directSb.WriteString("  " + StyleHelp.Render("Supports direct GGUF links or Hugging Face repositories (e.g. unsloth/gemma-4-E4B-it-GGUF).") + "\n")
 
-	panelHeight := 7
+	if m.err != nil {
+		directSb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorDanger).Render("  "+m.err.Error()) + "\n")
+	}
+
+	linesCount := strings.Count(directSb.String(), "\n")
+	panelHeight := linesCount + 1
+	if panelHeight < 7 {
+		panelHeight = 7
+	}
+
 	formBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(ColorBorder).
@@ -305,4 +388,21 @@ func (m *DownloaderModel) View(width int, height int) string {
 		BorderForeground(ColorPrimary).
 		Width(boxWidth).
 		Render(sb.String())
+}
+
+type hfResolveMsg struct {
+	repoID string
+	files  []model.HFSibling
+	err    error
+}
+
+func (m *DownloaderModel) resolveHFRepo(repoID string) tea.Cmd {
+	token := m.config.HFToken
+	return func() tea.Msg {
+		files, err := model.ListHFModelFiles(repoID, token)
+		if err != nil {
+			return hfResolveMsg{err: err}
+		}
+		return hfResolveMsg{repoID: repoID, files: files}
+	}
 }
