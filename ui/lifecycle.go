@@ -160,29 +160,56 @@ func (m *LifecycleModel) StartUpdate() tea.Cmd {
 			}
 		}
 
-		asset, err := runner.MatchAsset(release, m.specs)
+		mainAsset, cudartAsset, err := runner.MatchAsset(release, m.specs)
 		if err != nil {
 			ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to match release asset: %w", err), ch: ch}
 			return
 		}
 
-		ch <- updateMsg{state: StateDownloading, progress: 0.0, msg: fmt.Sprintf("Downloading %s...", asset.Name), ch: ch}
+		var mainScale float64 = 1.0
+		if cudartAsset != nil {
+			mainScale = 0.7
+		}
 
-		destFile := filepath.Join(m.config.Paths.Downloads, asset.Name)
+		ch <- updateMsg{state: StateDownloading, progress: 0.0, msg: fmt.Sprintf("Downloading %s...", mainAsset.Name), ch: ch}
+
+		destFile := filepath.Join(m.config.Paths.Downloads, mainAsset.Name)
 		progressChan := make(chan float64, 5)
 
 		downloadErrChan := make(chan error, 1)
 		go func() {
-			downloadErrChan <- runner.DownloadRelease(asset.BrowserDownloadURL, destFile, progressChan)
+			downloadErrChan <- runner.DownloadRelease(mainAsset.BrowserDownloadURL, destFile, progressChan)
 		}()
 
 		for p := range progressChan {
-			ch <- updateMsg{state: StateDownloading, progress: p, msg: fmt.Sprintf("Downloading %s (%.1f%%)...", asset.Name, p*100.0), ch: ch}
+			ch <- updateMsg{state: StateDownloading, progress: p * mainScale, msg: fmt.Sprintf("Downloading %s (%.1f%%)...", mainAsset.Name, p*100.0), ch: ch}
 		}
 
 		if derr := <-downloadErrChan; derr != nil {
 			ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to download release: %w", derr), ch: ch}
 			return
+		}
+
+		var destCudartFile string
+		if cudartAsset != nil {
+			ch <- updateMsg{state: StateDownloading, progress: 0.7, msg: fmt.Sprintf("Downloading %s...", cudartAsset.Name), ch: ch}
+			destCudartFile = filepath.Join(m.config.Paths.Downloads, cudartAsset.Name)
+			cudartProgressChan := make(chan float64, 5)
+
+			cudartDownloadErrChan := make(chan error, 1)
+			go func() {
+				cudartDownloadErrChan <- runner.DownloadRelease(cudartAsset.BrowserDownloadURL, destCudartFile, cudartProgressChan)
+			}()
+
+			for p := range cudartProgressChan {
+				combinedProgress := 0.7 + (p * 0.3)
+				ch <- updateMsg{state: StateDownloading, progress: combinedProgress, msg: fmt.Sprintf("Downloading %s (%.1f%%)...", cudartAsset.Name, p*100.0), ch: ch}
+			}
+
+			if derr := <-cudartDownloadErrChan; derr != nil {
+				ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to download cudart release: %w", derr), ch: ch}
+				return
+			}
 		}
 
 		ch <- updateMsg{state: StateExtracting, msg: "Creating backup of existing llama.cpp...", ch: ch}
@@ -204,8 +231,18 @@ func (m *LifecycleModel) StartUpdate() tea.Cmd {
 			ch <- updateMsg{state: StateError, err: fmt.Errorf("extraction failed (rolled back): %w", err), ch: ch}
 			return
 		}
-
 		_ = os.Remove(destFile)
+
+		if destCudartFile != "" {
+			ch <- updateMsg{state: StateExtracting, msg: "Extracting CUDA runtime DLLs...", ch: ch}
+			err = runner.ExtractArchive(destCudartFile, m.config.Paths.LlamaCPP)
+			if err != nil {
+				_ = runner.RollbackBackup(backupDir, m.config.Paths.LlamaCPP)
+				ch <- updateMsg{state: StateError, err: fmt.Errorf("CUDA DLLs extraction failed (rolled back): %w", err), ch: ch}
+				return
+			}
+			_ = os.Remove(destCudartFile)
+		}
 
 		ch <- updateMsg{state: StateVerifying, msg: "Verifying installation...", ch: ch}
 		version, commit, buildInfo, err := runner.QueryLocalVersion(m.config.Paths.LlamaCPP)

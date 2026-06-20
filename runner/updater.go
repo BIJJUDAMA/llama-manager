@@ -116,10 +116,10 @@ func CheckLatestRelease() (*GithubRelease, error) {
 	return &release, nil
 }
 
-// MatchAsset finds the most suitable asset for the user's OS, CPU/GPU architecture.
-func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (*ReleaseAsset, error) {
+// MatchAsset finds the most suitable assets (main binaries and optional cudart DLLs) for the user's OS, CPU/GPU architecture.
+func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (mainAsset *ReleaseAsset, cudartAsset *ReleaseAsset, err error) {
 	if len(release.Assets) == 0 {
-		return nil, fmt.Errorf("no assets in release")
+		return nil, nil, fmt.Errorf("no assets in release")
 	}
 
 	var bestAsset *ReleaseAsset
@@ -130,6 +130,11 @@ func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (*Release
 
 		// 1. Extension check
 		if !strings.HasSuffix(nameLower, ".zip") && !strings.HasSuffix(nameLower, ".tar.gz") && !strings.HasSuffix(nameLower, ".tgz") {
+			continue
+		}
+
+		// Skip cudart assets when selecting the main llama binaries
+		if strings.Contains(nameLower, "cudart") {
 			continue
 		}
 
@@ -200,17 +205,60 @@ func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (*Release
 
 		if score > bestScore {
 			bestScore = score
-			// Keep a pointer to the asset inside the loop (need to allocate/copy)
 			assetCopy := asset
 			bestAsset = &assetCopy
 		}
 	}
 
 	if bestAsset == nil {
-		return nil, fmt.Errorf("no matching asset found for OS %s and GPU type %s", specs.OS, specs.GPU.Type)
+		return nil, nil, fmt.Errorf("no matching asset found for OS %s and GPU type %s", specs.OS, specs.GPU.Type)
 	}
 
-	return bestAsset, nil
+	// 5. If Windows and CUDA, find the corresponding cudart DLLs asset
+	if strings.ToLower(specs.OS) == "windows" && specs.GPU.Type == "CUDA" {
+		bestCudartScore := -1
+		for _, asset := range release.Assets {
+			nameLower := strings.ToLower(asset.Name)
+			if !strings.Contains(nameLower, "cudart") {
+				continue
+			}
+			if !strings.HasSuffix(nameLower, ".zip") {
+				continue
+			}
+			// Must match OS and arch
+			if !strings.Contains(nameLower, "win") && !strings.Contains(nameLower, "windows") {
+				continue
+			}
+			if !strings.Contains(nameLower, "x64") && !strings.Contains(nameLower, "x86_64") && !strings.Contains(nameLower, "amd64") {
+				continue
+			}
+
+			score := 100
+			mainCudaVer := extractCudaVersion(bestAsset.Name)
+			thisCudaVer := extractCudaVersion(asset.Name)
+			if mainCudaVer != "" && thisCudaVer != "" && mainCudaVer == thisCudaVer {
+				score += 50
+			}
+
+			if score > bestCudartScore {
+				bestCudartScore = score
+				assetCopy := asset
+				cudartAsset = &assetCopy
+			}
+		}
+	}
+
+	return bestAsset, cudartAsset, nil
+}
+
+func extractCudaVersion(name string) string {
+	nameLower := strings.ToLower(name)
+	re := regexp.MustCompile(`(?:cuda-?|cu)(\d+(?:\.\d+)*)`)
+	matches := re.FindStringSubmatch(nameLower)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
 }
 
 // DownloadRelease downloads an asset URL and writes progress fraction (0.0 to 1.0) to progressChan.

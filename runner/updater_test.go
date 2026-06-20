@@ -16,6 +16,7 @@ func TestMatchAsset(t *testing.T) {
 		Name:    "llama.cpp b3310",
 		Assets: []ReleaseAsset{
 			{Name: "llama-b3310-bin-win-cu12.2.0-x64.zip", BrowserDownloadURL: "http://win-cuda-12.zip", Size: 100},
+			{Name: "cudart-llama-bin-win-cuda-12.4-x64.zip", BrowserDownloadURL: "http://win-cudart-12.zip", Size: 50},
 			{Name: "llama-b3310-bin-win-llvm-x64.zip", BrowserDownloadURL: "http://win-llvm.zip", Size: 80},
 			{Name: "llama-b3310-bin-ubuntu-x64.zip", BrowserDownloadURL: "http://linux.zip", Size: 70},
 			{Name: "llama-b3310-bin-macos-arm64.zip", BrowserDownloadURL: "http://mac-arm64.zip", Size: 60},
@@ -30,12 +31,15 @@ func TestMatchAsset(t *testing.T) {
 			Type: "CUDA",
 		},
 	}
-	asset, err := MatchAsset(release, specsWinCUDA)
+	asset, cudart, err := MatchAsset(release, specsWinCUDA)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !strings.Contains(asset.Name, "win-cu12.2.0") {
 		t.Errorf("expected win-cu12.2.0 asset, got %s", asset.Name)
+	}
+	if cudart == nil || !strings.Contains(cudart.Name, "cudart-llama-bin-win-cuda-12.4-x64") {
+		t.Errorf("expected cudart asset matching CUDA DLLs, got %+v", cudart)
 	}
 
 	// 2. Windows with CPU only
@@ -45,12 +49,15 @@ func TestMatchAsset(t *testing.T) {
 			Type: "CPU",
 		},
 	}
-	asset, err = MatchAsset(release, specsWinCPU)
+	asset, cudart, err = MatchAsset(release, specsWinCPU)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !strings.Contains(asset.Name, "win-llvm") {
 		t.Errorf("expected win-llvm asset, got %s", asset.Name)
+	}
+	if cudart != nil {
+		t.Errorf("expected no cudart asset for CPU, got %s", cudart.Name)
 	}
 
 	// 3. macOS
@@ -60,12 +67,15 @@ func TestMatchAsset(t *testing.T) {
 			Type: "Metal",
 		},
 	}
-	asset, err = MatchAsset(release, specsMac)
+	asset, cudart, err = MatchAsset(release, specsMac)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !strings.Contains(asset.Name, "macos-arm64") {
 		t.Errorf("expected macos-arm64 asset, got %s", asset.Name)
+	}
+	if cudart != nil {
+		t.Errorf("expected no cudart asset for Metal, got %s", cudart.Name)
 	}
 }
 
