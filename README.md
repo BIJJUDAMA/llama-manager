@@ -1,73 +1,66 @@
-# llama-manager
+# Llama Manager
 
-A terminal-based manager for local large language models. It handles model discovery, hardware suitability estimation, launch profiles, and llama.cpp lifecycle management — all from the keyboard.
+A terminal-based manager for local large language models. It handles model discovery, hardware suitability estimation, launch profiles, model downloads, and llama.cpp lifecycle management.
 
 ## Requirements
 
-- [Go 1.21 or later](https://go.dev/dl/)
-- llama.cpp binaries (managed from within the application)
-- Windows (Linux and macOS support is planned)
-
-## Data Directory
-
-All application data — models, configuration, llama.cpp binaries, download cache — is stored in a fixed directory determined by the operating system. It is created automatically on first launch.
-
-| Platform | Path |
-|---|---|
-| Windows | `%APPDATA%\llmgr` |
-| Linux | planned |
-| macOS | planned |
+* Go 1.26 or later
+* llama.cpp binaries (downloaded and managed from within the application)
+* Windows (Linux and macOS support is planned)
 
 ## Installation
+
+Ensure Go is installed on your system. Run the following command to download and install the application:
 
 ```
 go install github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest
 ```
 
-The binary is placed in `$GOPATH/bin` (default: `$HOME/go/bin`). Ensure that directory is on your `PATH`. After a standard Go installation it usually is, but if not, add it manually:
+The binary is placed in your Go bin directory (typically `$HOME/go/bin` or `%USERPROFILE%\go\bin`). Make sure this directory is in your system's `PATH`.
 
-**Linux / macOS:**
-```
-export PATH="$HOME/go/bin:$PATH"
-```
+To temporarily add it to your path:
 
-**Windows (PowerShell):**
-```
+### Windows (PowerShell)
+```powershell
 $env:PATH += ";$env:USERPROFILE\go\bin"
 ```
 
-Add the line to your shell profile to make it permanent.
+### Linux / macOS
+```bash
+export PATH="$HOME/go/bin:$PATH"
+```
 
 ## Usage
+
+Start the application with:
 
 ```
 llmgr
 ```
 
-Navigation is keyboard-driven. Press `?` or follow the footer hints shown at the bottom of each screen.
+Navigation is keyboard-driven. Follow the key guides at the bottom of the screen.
 
-**Flags:**
+### Flags
+* `--version`: Print the installed version and exit.
+* `--reset-onboarding`: Re-run the onboarding tour on the next launch.
 
-| Flag | Description |
-|---|---|
-| `--version` | Print the installed version and exit |
-| `--reset-onboarding` | Re-run the onboarding tour on next launch |
+## Data Directory
 
-## Models
+All application data (models, configuration, llama.cpp binaries, download queue) is stored in a fixed directory. On Windows, this is located at `%APPDATA%\llmgr`.
 
-Place GGUF model files anywhere under the `models` subdirectory of the data directory. The application discovers them recursively on startup and re-scans as needed.
+Place GGUF model files under the `models` subdirectory. The application discovers them recursively on startup.
 
 ## Configuration
 
-Configuration is stored automatically on first launch. Settings such as the color theme and Hugging Face token can be changed from within the Settings screen (`U` key).
+Settings such as color themes and Hugging Face tokens are stored in `config.json` in the data directory and can be edited directly inside the application's Settings screen (`U` key).
 
 ## Updating
+
+To update Llama Manager to the latest version, run:
 
 ```
 go install github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest
 ```
-
-Running the same install command pulls the latest tagged release.
 
 ## License
 
