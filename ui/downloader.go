@@ -18,6 +18,7 @@ const (
 	FocusRepos
 	FocusFiles
 	FocusQueue
+	FocusDirectURL
 )
 
 type searchHFMsg struct {
@@ -43,6 +44,11 @@ type DownloaderModel struct {
 	loadingRepos    bool
 	loadingFiles    bool
 	err             error
+
+	urlInput        textinput.Model
+	filenameInput   textinput.Model
+	directURLActive bool
+	directURLFocus  int // 0 for URL, 1 for filename
 }
 
 func NewDownloaderModel(cfg *config.Config, q *model.DownloadQueue) *DownloaderModel {
@@ -52,13 +58,27 @@ func NewDownloaderModel(cfg *config.Config, q *model.DownloadQueue) *DownloaderM
 	ti.Width = 50
 	ti.Focus()
 
+	urlTi := textinput.New()
+	urlTi.Placeholder = "Paste direct GGUF model download URL (http/https)..."
+	urlTi.CharLimit = 512
+	urlTi.Width = 60
+
+	fileTi := textinput.New()
+	fileTi.Placeholder = "Enter local filename (optional, e.g. my-model.gguf)..."
+	fileTi.CharLimit = 156
+	fileTi.Width = 60
+
 	return &DownloaderModel{
-		config:      cfg,
-		queue:       q,
-		searchInput: ti,
-		focus:       FocusSearch,
-		repos:       []model.HFModelResult{},
-		files:       []model.HFSibling{},
+		config:          cfg,
+		queue:           q,
+		searchInput:     ti,
+		focus:           FocusSearch,
+		repos:           []model.HFModelResult{},
+		files:           []model.HFSibling{},
+		urlInput:        urlTi,
+		filenameInput:   fileTi,
+		directURLActive: false,
+		directURLFocus:  0,
 	}
 }
 
@@ -78,6 +98,71 @@ func listHFFilesCmd(modelID string, token string) tea.Cmd {
 
 func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.focus == FocusDirectURL {
+		var cmd tea.Cmd
+		if m.directURLFocus == 0 {
+			m.urlInput, cmd = m.urlInput.Update(msg)
+		} else {
+			m.filenameInput, cmd = m.filenameInput.Update(msg)
+		}
+		cmds = append(cmds, cmd)
+
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "tab":
+				m.directURLFocus = (m.directURLFocus + 1) % 2
+				if m.directURLFocus == 0 {
+					m.urlInput.Focus()
+					m.filenameInput.Blur()
+				} else {
+					m.urlInput.Blur()
+					m.filenameInput.Focus()
+				}
+			case "shift+tab":
+				m.directURLFocus = (m.directURLFocus + 1) % 2
+				if m.directURLFocus == 0 {
+					m.urlInput.Focus()
+					m.filenameInput.Blur()
+				} else {
+					m.urlInput.Blur()
+					m.filenameInput.Focus()
+				}
+			case "esc":
+				m.directURLActive = false
+				m.urlInput.Blur()
+				m.filenameInput.Blur()
+				m.focus = FocusSearch
+				m.searchInput.Focus()
+			case "enter":
+				urlStr := strings.TrimSpace(m.urlInput.Value())
+				if urlStr != "" {
+					filename := strings.TrimSpace(m.filenameInput.Value())
+					if filename == "" {
+						parts := strings.Split(urlStr, "/")
+						if len(parts) > 0 {
+							filename = parts[len(parts)-1]
+							if qIdx := strings.Index(filename, "?"); qIdx != -1 {
+								filename = filename[:qIdx]
+							}
+						}
+					}
+					if filename == "" {
+						filename = "downloaded_model.gguf"
+					}
+
+					m.queue.AddTask("DirectDownload", filename, 0, urlStr)
+					m.directURLActive = false
+					m.urlInput.Blur()
+					m.filenameInput.Blur()
+					m.urlInput.SetValue("")
+					m.filenameInput.SetValue("")
+					m.focus = FocusQueue
+					m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+				}
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
 
 	if m.focus == FocusSearch {
 		var cmd tea.Cmd
@@ -177,6 +262,17 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 						m.selectedTaskIdx = 0
 					}
 				}
+			}
+
+		case "l", "L":
+			if m.focus != FocusSearch {
+				m.directURLActive = true
+				m.focus = FocusDirectURL
+				m.directURLFocus = 0
+				m.urlInput.Focus()
+				m.filenameInput.Blur()
+				m.urlInput.SetValue("")
+				m.filenameInput.SetValue("")
 			}
 		}
 	}
@@ -374,12 +470,41 @@ func (m *DownloaderModel) View(width int, height int) string {
 		panelBorderRight = panelBorderRight.BorderForeground(ColorPrimary)
 	}
 
-	splitView := lipgloss.JoinHorizontal(lipgloss.Top,
-		panelBorderLeft.Render(leftSb.String()),
-		"  ",
-		panelBorderRight.Render(rightSb.String()),
-	)
-	sb.WriteString("  " + splitView + "\n\n")
+	var middleView string
+	if m.directURLActive {
+		var directSb strings.Builder
+		directSb.WriteString("\n  " + lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("DIRECT URL DOWNLOADER") + "\n\n")
+
+		urlStyle := lipgloss.NewStyle().Foreground(ColorWhite)
+		fileStyle := lipgloss.NewStyle().Foreground(ColorWhite)
+		if m.directURLFocus == 0 {
+			urlStyle = urlStyle.Foreground(ColorSecondary).Bold(true)
+		} else {
+			fileStyle = fileStyle.Foreground(ColorSecondary).Bold(true)
+		}
+
+		directSb.WriteString("  " + urlStyle.Render("Direct URL:") + "\n")
+		directSb.WriteString("  " + m.urlInput.View() + "\n\n")
+		directSb.WriteString("  " + fileStyle.Render("Destination Filename (optional):") + "\n")
+		directSb.WriteString("  " + m.filenameInput.View() + "\n\n")
+
+		directSb.WriteString("  " + StyleHelp.Render("Leave filename empty to auto-extract from URL.") + "\n")
+
+		middleView = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorPrimary).
+			Width(width - 6).
+			Height(panelHeight).
+			Render(directSb.String())
+	} else {
+		splitView := lipgloss.JoinHorizontal(lipgloss.Top,
+			panelBorderLeft.Render(leftSb.String()),
+			"  ",
+			panelBorderRight.Render(rightSb.String()),
+		)
+		middleView = splitView
+	}
+	sb.WriteString("  " + middleView + "\n\n")
 
 	// 4. Bottom: Queue Manager
 	var queueSb strings.Builder
@@ -441,18 +566,25 @@ func (m *DownloaderModel) View(width int, height int) string {
 
 	// Help instructions
 	var helpKeys []string
-	helpKeys = append(helpKeys, fmt.Sprintf("%s Navigation", StyleHelpKey.Render("[Tab/Shift-Tab]")))
-	if m.focus == FocusSearch {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Search", StyleHelpKey.Render("[Enter]")))
-	} else if m.focus == FocusRepos {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Fetch Files", StyleHelpKey.Render("[Enter]")))
-	} else if m.focus == FocusFiles {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Download GGUF", StyleHelpKey.Render("[Enter]")))
-	} else if m.focus == FocusQueue {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Pause/Resume", StyleHelpKey.Render("[P]")))
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel/Remove", StyleHelpKey.Render("[C]")))
+	if m.directURLActive {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Switch Fields", StyleHelpKey.Render("[Tab]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Start Download", StyleHelpKey.Render("[Enter]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel", StyleHelpKey.Render("[Esc]")))
+	} else {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Navigation", StyleHelpKey.Render("[Tab/Shift-Tab]")))
+		if m.focus == FocusSearch {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Search", StyleHelpKey.Render("[Enter]")))
+		} else if m.focus == FocusRepos {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Fetch Files", StyleHelpKey.Render("[Enter]")))
+		} else if m.focus == FocusFiles {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Download GGUF", StyleHelpKey.Render("[Enter]")))
+		} else if m.focus == FocusQueue {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Pause/Resume", StyleHelpKey.Render("[P]")))
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel/Remove", StyleHelpKey.Render("[C]")))
+		}
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Custom URL", StyleHelpKey.Render("[L]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 	}
-	helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 
 	sb.WriteString("  " + strings.Join(helpKeys, "  ") + "\n")
 

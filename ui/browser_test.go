@@ -361,6 +361,87 @@ func TestBrowserTagsAndNotes(t *testing.T) {
 	}
 }
 
+func TestBrowserDownloaderDirectURL(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// 1. Transition to Downloader screen
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	bm = m.(*BrowserModel)
+
+	if bm.screenMode != ScreenDownloader {
+		t.Fatalf("expected screenMode to be ScreenDownloader, got %d", bm.screenMode)
+	}
+
+	// 2. Change focus to trigger custom link input: first we need to move out of FocusSearch to allow 'l' key
+	bm.downloaderModel.focus = FocusQueue
+
+	// Press 'l' to toggle direct URL mode
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("l")})
+	bm = m.(*BrowserModel)
+
+	if !bm.downloaderModel.directURLActive || bm.downloaderModel.focus != FocusDirectURL {
+		t.Fatalf("expected direct URL mode to be active, got active=%t, focus=%d", bm.downloaderModel.directURLActive, bm.downloaderModel.focus)
+	}
+
+	// 3. Type URL: "http://example.com/models/test-model.gguf"
+	for _, char := range "http://example.com/models/test-model.gguf" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Tab to switch to filename field
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	if bm.downloaderModel.directURLFocus != 1 {
+		t.Errorf("expected focus to switch to filename input, got focus index %d", bm.downloaderModel.directURLFocus)
+	}
+
+	// Type custom filename: "custom-name.gguf"
+	for _, char := range "custom-name.gguf" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// Press enter to queue download
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	// Focus should return to queue, directURLActive should be false
+	if bm.downloaderModel.directURLActive {
+		t.Errorf("expected direct URL active mode to turn off after submission")
+	}
+
+	tasks := bm.downloadQueue.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task in queue, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.FileName != "custom-name.gguf" {
+		t.Errorf("expected task filename to be 'custom-name.gguf', got %q", task.FileName)
+	}
+	if task.URL != "http://example.com/models/test-model.gguf" {
+		t.Errorf("expected task URL to be correct, got %q", task.URL)
+	}
+}
+
+
 
 
 
