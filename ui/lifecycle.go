@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -65,10 +66,14 @@ type LifecycleModel struct {
 	tokenInput       textinput.Model
 	tokenEditActive  bool
 	// App self-update fields
-	appVersion      string
-	appLatestTag    string
-	appCheckErr     error
-	appChecking     bool
+	appVersion       string
+	appLatestTag     string
+	appCheckErr      error
+	appChecking      bool
+	appUpdating      bool
+	appUpdateErr     error
+	appUpdateSuccess bool
+	appUpdateMsg     string
 }
 
 func resolveAppVersion() string {
@@ -117,6 +122,26 @@ func (m *LifecycleModel) StartAppCheck() tea.Cmd {
 			return appCheckMsg{err: err}
 		}
 		return appCheckMsg{latestTag: rel.TagName}
+	}
+}
+
+type appUpdateMsg struct {
+	err error
+	msg string
+}
+
+// StartAppUpdate runs go install to update the app.
+func (m *LifecycleModel) StartAppUpdate() tea.Cmd {
+	m.appUpdating = true
+	m.appUpdateErr = nil
+	m.appUpdateSuccess = false
+	return func() tea.Msg {
+		cmd := exec.Command("go", "install", "github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return appUpdateMsg{err: fmt.Errorf("failed to run go install: %w (output: %s)", err, string(output))}
+		}
+		return appUpdateMsg{msg: "Update successful! Please restart the application."}
 	}
 }
 
@@ -372,6 +397,18 @@ func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 			m.appLatestTag = msg.latestTag
 		}
 
+	case appUpdateMsg:
+		m.appUpdating = false
+		if msg.err != nil {
+			m.appUpdateErr = msg.err
+			m.appUpdateSuccess = false
+		} else {
+			m.appUpdateErr = nil
+			m.appUpdateSuccess = true
+			m.appUpdateMsg = msg.msg
+			m.appVersion = m.appLatestTag
+		}
+
 	case updateMsg:
 		m.state = msg.state
 		if msg.err != nil {
@@ -450,12 +487,21 @@ func (m *LifecycleModel) View(width int, height int) string {
 	} else if m.appCheckErr != nil {
 		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", StyleDanger.Render("Check failed")))
 	} else if m.appLatestTag != "" {
-		if m.appLatestTag == m.appVersion {
+		if m.appUpdateSuccess {
+			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", StyleSuccess.Render(m.appLatestTag+" (up-to-date)")))
+			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Status:", StyleSuccess.Render(m.appUpdateMsg)))
+		} else if m.appLatestTag == m.appVersion {
 			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", StyleSuccess.Render(m.appLatestTag+" (up-to-date)")))
 		} else {
 			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(m.appLatestTag+" — update available")))
-			sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Update command:",
-				lipgloss.NewStyle().Foreground(ColorMuted).Render("go install github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest")))
+			if m.appUpdating {
+				sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Status:", lipgloss.NewStyle().Foreground(ColorAccent).Render("Installing update...")))
+			} else if m.appUpdateErr != nil {
+				sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Status:", StyleDanger.Render(fmt.Sprintf("Update failed: %v", m.appUpdateErr))))
+				sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Press:", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("[A] to retry update")))
+			} else {
+				sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Press:", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("[A] to install update")))
+			}
 		}
 	} else {
 		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorMuted).Render("Not checked  [V] to check")))
@@ -548,6 +594,9 @@ func (m *LifecycleModel) View(width int, height int) string {
 	if m.state != StateDownloading && m.state != StateExtracting && m.state != StateVerifying && m.state != StateRollingBack {
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Check llama.cpp", StyleHelpKey.Render("[C]")))
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Check App", StyleHelpKey.Render("[V]")))
+		if m.appLatestTag != "" && m.appLatestTag != m.appVersion && !m.appUpdating {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Update App", StyleHelpKey.Render("[A]")))
+		}
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Cycle Theme", StyleHelpKey.Render("[O]")))
 		if m.latestTagName != "" {
 			helpKeys = append(helpKeys, fmt.Sprintf("%s Apply llama.cpp Update", StyleHelpKey.Render("[U]")))

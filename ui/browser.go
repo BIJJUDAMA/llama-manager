@@ -583,6 +583,10 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.lifecycleModel.appChecking {
 						cmds = append(cmds, m.lifecycleModel.StartAppCheck())
 					}
+				case "a", "A":
+					if m.lifecycleModel.appLatestTag != "" && m.lifecycleModel.appLatestTag != m.lifecycleModel.appVersion && !m.lifecycleModel.appUpdating {
+						cmds = append(cmds, m.lifecycleModel.StartAppUpdate())
+					}
 				case "n", "N":
 					// Reset onboarding tour
 					m.config.OnboardingCompleted = false
