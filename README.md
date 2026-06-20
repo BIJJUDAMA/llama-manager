@@ -6,7 +6,17 @@ A terminal-based manager for local large language models. It handles model disco
 
 - [Go 1.21 or later](https://go.dev/dl/)
 - llama.cpp binaries (managed from within the application)
-- Windows, Linux, or macOS
+- Windows (Linux and macOS support is planned)
+
+## Data Directory
+
+All application data — models, configuration, llama.cpp binaries, download cache — is stored in a fixed directory determined by the operating system. It is created automatically on first launch.
+
+| Platform | Path |
+|---|---|
+| Windows | `%APPDATA%\llmgr` |
+| Linux | planned |
+| macOS | planned |
 
 ## Installation
 
@@ -45,7 +55,7 @@ Navigation is keyboard-driven. Press `?` or follow the footer hints shown at the
 
 ## Models
 
-Place GGUF model files anywhere under a `models/` directory. The application discovers them recursively on startup and re-scans as needed.
+Place GGUF model files anywhere under the `models` subdirectory of the data directory. The application discovers them recursively on startup and re-scans as needed.
 
 ## Configuration
 
