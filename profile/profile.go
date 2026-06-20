@@ -45,7 +45,7 @@ func DefaultProfiles() []*Profile {
 			Port:      8080,
 		},
 		{
-			Name:      "8K Context",
+			Name:      "High",
 			Context:   8192,
 			Threads:   threads,
 			GPULayers: 999,
