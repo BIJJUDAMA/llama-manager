@@ -87,7 +87,7 @@ func EstimateMemory(meta *model.GGUFMetadata, specs *HardwareSpecs, contextLengt
 		} else {
 			est.Suitability = SuitabilityExceeds
 			est.GPUOffloadPct = 0
-			est.Reason = "Exceeds total system memory; severe performance lag expected"
+			est.Reason = "Exceeds total system memory; severe performance lag expected (Press [Enter] to choose a profile with a smaller context length)"
 		}
 		return est
 	}
@@ -117,7 +117,7 @@ func EstimateMemory(meta *model.GGUFMetadata, specs *HardwareSpecs, contextLengt
 			// Check if it fits in total system memory
 			if totalMemory > specs.GPU.VRAM+specs.RAM.Total {
 				est.Suitability = SuitabilityExceeds
-				est.Reason = "Exceeds combined GPU VRAM and System RAM"
+				est.Reason = "Exceeds combined GPU VRAM and System RAM (Press [Enter] to choose a profile with a smaller context length)"
 			} else {
 				est.Reason = "Partial GPU offload; remaining layers will run on CPU"
 			}
@@ -130,7 +130,7 @@ func EstimateMemory(meta *model.GGUFMetadata, specs *HardwareSpecs, contextLengt
 			} else {
 				est.Suitability = SuitabilityExceeds
 				est.GPUOffloadPct = 0
-				est.Reason = "Exceeds system memory limits"
+				est.Reason = "Exceeds system memory limits (Press [Enter] to choose a profile with a smaller context length)"
 			}
 		}
 	} else {
@@ -142,7 +142,7 @@ func EstimateMemory(meta *model.GGUFMetadata, specs *HardwareSpecs, contextLengt
 		} else {
 			est.Suitability = SuitabilityExceeds
 			est.GPUOffloadPct = 0
-			est.Reason = "Exceeds total system RAM"
+			est.Reason = "Exceeds total system RAM (Press [Enter] to choose a profile with a smaller context length)"
 		}
 	}
 
