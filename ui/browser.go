@@ -107,6 +107,9 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 
 	q := model.NewDownloadQueue(cfg.Paths.Models, cfg.HFToken)
 
+	// Apply theme colors
+	ApplyTheme(cfg.Theme)
+
 	return &BrowserModel{
 		config:              cfg,
 		srvRunner:           srv,
@@ -544,6 +547,25 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.lifecycleModel.hasBackup && m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
 						cmds = append(cmds, m.lifecycleModel.StartRollback())
 					}
+				case "o", "O":
+					newTheme := "dracula"
+					switch strings.ToLower(m.config.Theme) {
+					case "dracula", "dark", "purple", "":
+						newTheme = "sunset"
+					case "sunset":
+						newTheme = "nord"
+					case "nord":
+						newTheme = "cyberpunk"
+					case "cyberpunk":
+						newTheme = "forest"
+					case "forest":
+						newTheme = "monochrome"
+					case "monochrome":
+						newTheme = "dracula"
+					}
+					m.config.Theme = newTheme
+					_ = m.config.Save()
+					ApplyTheme(newTheme)
 				case "t", "T":
 					_, cmd := m.lifecycleModel.Update(msg)
 					if cmd != nil {
@@ -1180,7 +1202,9 @@ func (m *BrowserModel) View() string {
 
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftView, rightView)
 
-	header := StyleHeader.Render("LLAMA MANAGER — Local AI Control Center")
+	header := lipgloss.NewStyle().MarginBottom(1).Render(
+		RenderGradient("LLAMA MANAGER — Local AI Control Center", ThemeGradientStart, ThemeGradientEnd),
+	)
 
 	var footer string
 	if m.searchActive {

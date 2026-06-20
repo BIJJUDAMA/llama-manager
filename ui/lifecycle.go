@@ -419,7 +419,10 @@ func (m *LifecycleModel) View(width int, height int) string {
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Local Backup:", backupStr))
 
 	tokenStr := maskToken(m.config.HFToken)
-	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "HF Token:", tokenStr))
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "HF Token:", tokenStr))
+
+	themeStr := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(strings.Title(m.config.Theme))
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n\n", "Color Theme:", themeStr))
 
 	// Hardware Spec Match Info
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Target Platform Match:") + "\n")
@@ -469,6 +472,7 @@ func (m *LifecycleModel) View(width int, height int) string {
 	// Instructions help footer
 	var helpKeys []string
 	if m.state != StateDownloading && m.state != StateExtracting && m.state != StateVerifying && m.state != StateRollingBack {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Cycle Theme", StyleHelpKey.Render("[O]")))
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Check Updates", StyleHelpKey.Render("[C]")))
 		if m.latestTagName != "" {
 			helpKeys = append(helpKeys, fmt.Sprintf("%s Apply Update", StyleHelpKey.Render("[U]")))
@@ -480,7 +484,7 @@ func (m *LifecycleModel) View(width int, height int) string {
 	}
 	helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 
-	sb.WriteString("  " + strings.Join(helpKeys, "  ") + "\n")
+	sb.WriteString("  " + strings.Join(helpKeys, " │ ") + "\n")
 
 	boxWidth := width - 4
 	if boxWidth < 50 {
