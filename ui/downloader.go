@@ -117,6 +117,12 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 		}
 		m.err = nil // Clear error on key input
 		switch msg.String() {
+		case "ctrl+v":
+			if m.focus == FocusURL {
+				pasteFromClipboard(&m.urlInput)
+			} else if m.focus == FocusFilename {
+				pasteFromClipboard(&m.filenameInput)
+			}
 		case "tab":
 			m.nextFocus()
 		case "shift+tab":

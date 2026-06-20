@@ -73,6 +73,17 @@ func (pc *ProfileCreatorModel) Update(msg tea.Msg) (tea.Cmd, bool, bool) {
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
+		case "ctrl+v":
+			switch pc.focusIndex {
+			case 0:
+				pasteFromClipboard(&pc.nameInput)
+			case 1:
+				pasteFromClipboard(&pc.ctxInput)
+			case 2:
+				pasteFromClipboard(&pc.gpuInput)
+			case 3:
+				pasteFromClipboard(&pc.portInput)
+			}
 		case "tab":
 			pc.focusIndex = (pc.focusIndex + 1) % 4
 			pc.updateFocus()

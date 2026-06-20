@@ -298,8 +298,11 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	if m.onboardingActive {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			if m.onboardingStep == StepHFToken {
+		// StepHFToken is hoisted out first so that ALL message types (key events,
+		// bracketed-paste PasteMsg, window resize, etc.) are trapped here and never
+		// leak to the main browser handler where keys like "v" trigger navigation.
+		if m.onboardingStep == StepHFToken {
+			if keyMsg, ok := msg.(tea.KeyMsg); ok {
 				switch keyMsg.String() {
 				case "enter":
 					tokenValue := strings.TrimSpace(m.onboardingTokenInput.Value())
@@ -312,10 +315,13 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.onboardingActive = false
 					m.config.OnboardingCompleted = true
 					_ = m.config.Save()
-				case "p", "P", "b", "B":
+				case "ctrl+v":
+					pasteFromClipboard(&m.onboardingTokenInput)
+				case "ctrl+b":
 					m.onboardingTokenInput.Blur()
 					m.onboardingStep--
 				default:
+					// Forward all other keys to the input.
 					var cmd tea.Cmd
 					m.onboardingTokenInput, cmd = m.onboardingTokenInput.Update(msg)
 					if cmd != nil {
@@ -323,34 +329,57 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			} else {
-				switch keyMsg.String() {
-				case "enter", "space", "n", "N":
-					if m.onboardingStep == StepFinished {
-						m.onboardingActive = false
-						m.config.OnboardingCompleted = true
-						_ = m.config.Save()
-					} else {
-						m.onboardingStep++
-						if m.onboardingStep == StepHFToken {
-							m.onboardingTokenInput.Focus()
-						}
-					}
-				case "p", "P", "b", "B":
-					if m.onboardingStep > StepWelcome {
-						m.onboardingStep--
-						if m.onboardingStep == StepHFToken {
-							m.onboardingTokenInput.Focus()
-						}
-					}
-				case "esc", "q", "Q":
+				// Forward all other messages to the textinput so the bubbles library can handle them.
+				var cmd tea.Cmd
+				m.onboardingTokenInput, cmd = m.onboardingTokenInput.Update(msg)
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+			// Always return early during StepHFToken for all input/mouse messages
+			// so they don't leak, but allow background messages to fall through.
+			switch msg.(type) {
+			case tea.KeyMsg, tea.MouseMsg:
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "enter", "space", "n", "N":
+				if m.onboardingStep == StepFinished {
 					m.onboardingActive = false
 					m.config.OnboardingCompleted = true
 					_ = m.config.Save()
+				} else {
+					m.onboardingStep++
+					if m.onboardingStep == StepHFToken {
+						m.onboardingTokenInput.Focus()
+					}
 				}
+			case "p", "P", "b", "B":
+				if m.onboardingStep > StepWelcome {
+					m.onboardingStep--
+					if m.onboardingStep == StepHFToken {
+						m.onboardingTokenInput.Focus()
+					}
+				}
+			case "esc", "q", "Q":
+				m.onboardingActive = false
+				m.config.OnboardingCompleted = true
+				_ = m.config.Save()
 			}
 			return m, tea.Batch(cmds...)
 		}
+		// Catch-all: any user input event (key/mouse) must be swallowed
+		// while onboarding is active to prevent accidental menu navigation,
+		// but background system messages (like discoverMsg, tickMsg) must pass through.
+		switch msg.(type) {
+		case tea.KeyMsg, tea.MouseMsg:
+			return m, tea.Batch(cmds...)
+		}
 	}
+
 
 	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
 		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
@@ -680,7 +709,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 				m.filterModels()
 			}
-		} else {
+		} else if !m.onboardingActive {
 			switch msg.String() {
 			case "q", "ctrl+c":
 				_ = m.srvRunner.Stop()
@@ -1350,7 +1379,7 @@ func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
 	} else if m.onboardingStep == StepFinished {
 		navHelp = fmt.Sprintf("  %s Finish Tour", StyleHelpKey.Render("[Enter/Space]"))
 	} else if m.onboardingStep == StepHFToken {
-		navHelp = fmt.Sprintf("  %s Save & Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter]"), StyleHelpKey.Render("[P/B]"), StyleHelpKey.Render("[Esc]"))
+		navHelp = fmt.Sprintf("  %s Save & Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter]"), StyleHelpKey.Render("[Ctrl+B]"), StyleHelpKey.Render("[Esc]"))
 	} else {
 		navHelp = fmt.Sprintf("  %s Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter/Space]"), StyleHelpKey.Render("[P/B]"), StyleHelpKey.Render("[Esc]"))
 	}

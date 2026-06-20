@@ -359,6 +359,12 @@ func (m *LifecycleModel) ReadUpdateChan(ch chan updateMsg) tea.Cmd {
 
 func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 	if m.tokenEditActive {
+		// Handle ctrl+v before delegating to the textinput Update
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+v" {
+			pasteFromClipboard(&m.tokenInput)
+			return m, nil
+		}
+
 		var cmd tea.Cmd
 		m.tokenInput, cmd = m.tokenInput.Update(msg)
 
