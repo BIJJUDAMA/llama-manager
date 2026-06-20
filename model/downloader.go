@@ -21,7 +21,7 @@ type HFModelResult struct {
 }
 
 type HFSibling struct {
-	Rpath string `json:"rpath"`
+	Rpath string `json:"rfilename"`
 	Size  int64  `json:"size"`
 }
 
@@ -80,6 +80,10 @@ func (q *DownloadQueue) AddTask(modelID string, fileName string, size int64, dow
 
 	// Safe name for sub-directory
 	safeDirName := strings.ReplaceAll(modelID, "/", "_")
+	invalidChars := []string{"\\", ":", "*", "?", "\"", "<", ">", "|"}
+	for _, char := range invalidChars {
+		safeDirName = strings.ReplaceAll(safeDirName, char, "_")
+	}
 	destDir := filepath.Join(q.modelsDir, safeDirName)
 
 	task := &DownloadTask{
@@ -97,6 +101,34 @@ func (q *DownloadQueue) AddTask(modelID string, fileName string, size int64, dow
 
 	q.processNext()
 	return task
+}
+
+// AddFailedTask adds a pre-failed task directly to the queue.
+func (q *DownloadQueue) AddFailedTask(modelID string, fileName string, err error) *DownloadTask {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	task := &DownloadTask{
+		URL:       "",
+		DestPath:  "",
+		ModelID:   modelID,
+		FileName:  fileName,
+		TotalSize: 0,
+		Status:    StatusFailed,
+		Error:     err,
+		token:     q.configToken,
+	}
+
+	q.tasks = append(q.tasks, task)
+	q.notify(task)
+	return task
+}
+
+// UpdateToken updates the configuration token used by the queue.
+func (q *DownloadQueue) UpdateToken(token string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.configToken = token
 }
 
 func (q *DownloadQueue) notify(task *DownloadTask) {
@@ -172,6 +204,53 @@ func (q *DownloadQueue) CancelTask(task *DownloadTask) {
 	q.notify(task)
 	q.processNext()
 }
+
+// RemoveTask removes a task from the queue list without deleting its model file.
+func (q *DownloadQueue) RemoveTask(task *DownloadTask) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for i, t := range q.tasks {
+		if t == task {
+			q.tasks = append(q.tasks[:i], q.tasks[i+1:]...)
+			break
+		}
+	}
+
+	if q.activeTask == task {
+		q.activeTask = nil
+	}
+
+	q.notify(nil)
+}
+
+// ClearFinishedTasks removes all tasks that are Completed, Failed, or Canceled.
+func (q *DownloadQueue) ClearFinishedTasks() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var activeTaskRemaining bool
+	newTasks := []*DownloadTask{}
+	for _, t := range q.tasks {
+		t.mu.Lock()
+		status := t.Status
+		t.mu.Unlock()
+
+		if status == StatusQueued || status == StatusDownloading || status == StatusPaused {
+			newTasks = append(newTasks, t)
+			if t == q.activeTask {
+				activeTaskRemaining = true
+			}
+		}
+	}
+	q.tasks = newTasks
+	if !activeTaskRemaining {
+		q.activeTask = nil
+	}
+
+	q.notify(nil)
+}
+
 
 func (q *DownloadQueue) processNext() {
 	if q.activeTask != nil {

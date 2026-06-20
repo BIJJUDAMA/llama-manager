@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -17,6 +18,7 @@ const (
 	FocusURL DownloaderFocus = iota
 	FocusFilename
 	FocusQueue
+	FocusFileList
 )
 
 type DownloaderModel struct {
@@ -25,9 +27,14 @@ type DownloaderModel struct {
 	focus           DownloaderFocus
 	selectedTaskIdx int
 	err             error
+	resolving       bool
 
 	urlInput        textinput.Model
 	filenameInput   textinput.Model
+
+	resolvedFiles   []model.HFSibling
+	selectedFileIdx int
+	repoID          string
 }
 
 func NewDownloaderModel(cfg *config.Config, q *model.DownloadQueue) *DownloaderModel {
@@ -66,14 +73,17 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case hfResolveMsg:
+		m.resolving = false
 		if msg.err != nil {
-			m.err = fmt.Errorf("failed to fetch Hugging Face repo info: %v", msg.err)
+			m.queue.AddFailedTask(msg.repoID, "Hugging Face Repo", fmt.Errorf("failed to fetch Hugging Face repo info: %v", msg.err))
 			m.focus = FocusURL
 			m.urlInput.Focus()
+			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 		} else if len(msg.files) == 0 {
-			m.err = fmt.Errorf("no GGUF files found in repository '%s'", msg.repoID)
+			m.queue.AddFailedTask(msg.repoID, "Hugging Face Repo", fmt.Errorf("no GGUF files found in repository '%s'", msg.repoID))
 			m.focus = FocusURL
 			m.urlInput.Focus()
+			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 		} else if len(msg.files) == 1 {
 			filename := msg.files[0].Rpath
 			modelName := filename
@@ -89,16 +99,22 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 			m.filenameInput.Blur()
 			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 		} else {
-			var fileList []string
-			for _, f := range msg.files {
-				fileList = append(fileList, f.Rpath)
-			}
-			m.err = fmt.Errorf("multiple GGUF files found. Please enter one of these in the filename field:\n  - %s", strings.Join(fileList, "\n  - "))
-			m.focus = FocusFilename
-			m.filenameInput.Focus()
+			m.resolvedFiles = msg.files
+			m.selectedFileIdx = 0
+			m.repoID = msg.repoID
+			m.focus = FocusFileList
+			m.urlInput.Blur()
+			m.filenameInput.Blur()
 		}
 
 	case tea.KeyMsg:
+		if m.resolving {
+			if msg.String() == "esc" {
+				// Allow escape to flow
+			} else {
+				return m, nil
+			}
+		}
 		m.err = nil // Clear error on key input
 		switch msg.String() {
 		case "tab":
@@ -107,7 +123,29 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 			m.prevFocus()
 
 		case "enter":
-			if m.focus == FocusURL || m.focus == FocusFilename {
+			if m.focus == FocusFileList {
+				if len(m.resolvedFiles) > 0 && m.selectedFileIdx >= 0 && m.selectedFileIdx < len(m.resolvedFiles) {
+					selectedFile := m.resolvedFiles[m.selectedFileIdx]
+					filename := selectedFile.Rpath
+					modelName := filename
+					if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+						modelName = modelName[:len(modelName)-5]
+					}
+					parts := strings.Split(filename, "/")
+					baseName := parts[len(parts)-1]
+
+					downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", m.repoID, filename)
+					m.queue.AddTask(modelName, baseName, selectedFile.Size, downloadURL)
+
+					m.resolvedFiles = nil
+					m.repoID = ""
+					m.urlInput.SetValue("")
+					m.filenameInput.SetValue("")
+					m.focus = FocusURL
+					m.urlInput.Focus()
+					m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+				}
+			} else if m.focus == FocusURL || m.focus == FocusFilename {
 				urlStr := strings.TrimSpace(m.urlInput.Value())
 				if urlStr != "" {
 					filename := strings.TrimSpace(m.filenameInput.Value())
@@ -130,6 +168,21 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 							repoID = parts[0] + "/" + parts[1]
 						}
 
+						// Verify if HF token is set
+						hfToken := m.config.HFToken
+						if hfToken == "" {
+							hfToken = os.Getenv("HF_TOKEN")
+						}
+						if hfToken == "" {
+							m.queue.AddFailedTask(repoID, "Hugging Face Repo", fmt.Errorf("Hugging Face token is not set (please configure in Settings or onboarding)"))
+							m.urlInput.SetValue("")
+							m.filenameInput.SetValue("")
+							m.focus = FocusURL
+							m.urlInput.Focus()
+							m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+							return m, nil
+						}
+
 						if filename != "" {
 							downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repoID, filename)
 							modelName := filename
@@ -144,6 +197,8 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 							m.filenameInput.Blur()
 							m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 						} else {
+							m.resolving = true
+							m.err = nil
 							m.urlInput.Blur()
 							m.filenameInput.Blur()
 							cmds = append(cmds, m.resolveHFRepo(repoID))
@@ -179,11 +234,21 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 			}
 
 		case "up", "k":
-			if m.focus == FocusQueue {
+			if m.focus == FocusFileList {
+				m.selectedFileIdx--
+				if m.selectedFileIdx < 0 {
+					m.selectedFileIdx = 0
+				}
+			} else if m.focus == FocusQueue {
 				m.moveCursor(-1)
 			}
 		case "down", "j":
-			if m.focus == FocusQueue {
+			if m.focus == FocusFileList {
+				m.selectedFileIdx++
+				if m.selectedFileIdx >= len(m.resolvedFiles) {
+					m.selectedFileIdx = len(m.resolvedFiles) - 1
+				}
+			} else if m.focus == FocusQueue {
 				m.moveCursor(1)
 			}
 
@@ -204,13 +269,29 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 			if m.focus == FocusQueue {
 				tasks := m.queue.GetTasks()
 				if len(tasks) > 0 && m.selectedTaskIdx >= 0 && m.selectedTaskIdx < len(tasks) {
-					m.queue.CancelTask(tasks[m.selectedTaskIdx])
+					t := tasks[m.selectedTaskIdx]
+					if t.Status == model.StatusCompleted || t.Status == model.StatusFailed || t.Status == model.StatusCanceled {
+						m.queue.RemoveTask(t)
+					} else {
+						m.queue.CancelTask(t)
+					}
 					if m.selectedTaskIdx >= len(m.queue.GetTasks()) {
 						m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 					}
 					if m.selectedTaskIdx < 0 {
 						m.selectedTaskIdx = 0
 					}
+				}
+			}
+
+		case "x", "X":
+			if m.focus == FocusQueue {
+				m.queue.ClearFinishedTasks()
+				if m.selectedTaskIdx >= len(m.queue.GetTasks()) {
+					m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
+				}
+				if m.selectedTaskIdx < 0 {
+					m.selectedTaskIdx = 0
 				}
 			}
 		}
@@ -220,6 +301,9 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 }
 
 func (m *DownloaderModel) nextFocus() {
+	if m.focus == FocusFileList {
+		return
+	}
 	m.urlInput.Blur()
 	m.filenameInput.Blur()
 	switch m.focus {
@@ -235,6 +319,9 @@ func (m *DownloaderModel) nextFocus() {
 }
 
 func (m *DownloaderModel) prevFocus() {
+	if m.focus == FocusFileList {
+		return
+	}
 	m.urlInput.Blur()
 	m.filenameInput.Blur()
 	switch m.focus {
@@ -287,6 +374,10 @@ func (m *DownloaderModel) View(width int, height int) string {
 	directSb.WriteString("  " + m.filenameInput.View() + "\n\n")
 	directSb.WriteString("  " + StyleHelp.Render("Supports direct GGUF links or Hugging Face repositories (e.g. unsloth/gemma-4-E4B-it-GGUF).") + "\n")
 
+	if m.resolving {
+		directSb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorAccent).Render("  Fetching repository files list from Hugging Face...") + "\n")
+	}
+
 	if m.err != nil {
 		directSb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorDanger).Render("  "+m.err.Error()) + "\n")
 	}
@@ -310,49 +401,75 @@ func (m *DownloaderModel) View(width int, height int) string {
 
 	// Queue panel
 	var queueSb strings.Builder
-	queueSb.WriteString(lipgloss.NewStyle().Bold(true).Render("Download Queue:") + "\n")
-	tasks := m.queue.GetTasks()
-	if len(tasks) == 0 {
-		queueSb.WriteString("  Queue is empty. Enter a GGUF URL above to start downloading.\n")
-	} else {
-		for idx, t := range tasks {
-			statusStr := ""
-			switch t.Status {
-			case model.StatusQueued:
-				statusStr = StyleBadgeStopped.Render(" QUEUED ")
-			case model.StatusDownloading:
-				statusStr = StyleBadgeRunning.Render(" DOWNLOADING ") + fmt.Sprintf(" %.1f KB/s", t.SpeedKBps)
-			case model.StatusPaused:
-				statusStr = StyleBadgeStarting.Render(" PAUSED ")
-			case model.StatusCompleted:
-				statusStr = StyleBadgeRunning.Render(" COMPLETED ")
-			case model.StatusFailed:
-				statusStr = StyleBadgeFailed.Render(" FAILED ") + fmt.Sprintf(": %v", t.Error)
-			case model.StatusCanceled:
-				statusStr = StyleBadgeStopped.Render(" CANCELED ")
-			}
+	queueHeight := height - panelHeight - 16
+	if queueHeight < 4 {
+		queueHeight = 4
+	}
 
-			progressFraction := 0.0
-			if t.TotalSize > 0 {
-				progressFraction = float64(t.Downloaded) / float64(t.TotalSize)
-			}
-			progressBar := renderProgressBar(20, progressFraction)
+	if m.focus == FocusFileList {
+		queueSb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorSecondary).Render("Select GGUF File (Enter to download, Esc to cancel):") + "\n")
+		maxVisible := queueHeight - 2
+		if maxVisible < 1 {
+			maxVisible = 1
+		}
+		startIdx := 0
+		if m.selectedFileIdx >= maxVisible {
+			startIdx = m.selectedFileIdx - maxVisible + 1
+		}
+		endIdx := startIdx + maxVisible
+		if endIdx > len(m.resolvedFiles) {
+			endIdx = len(m.resolvedFiles)
+		}
 
-			row := fmt.Sprintf("%-20s %s %s (%s / %s)",
-				t.FileName, progressBar, statusStr, formatSize(t.Downloaded), formatSize(t.TotalSize),
-			)
-
-			if m.focus == FocusQueue && idx == m.selectedTaskIdx {
+		for idx := startIdx; idx < endIdx; idx++ {
+			f := m.resolvedFiles[idx]
+			row := fmt.Sprintf("  - %s (%s)", f.Rpath, formatSize(f.Size))
+			if idx == m.selectedFileIdx {
 				queueSb.WriteString(StyleSelectedListItem.Width(width - 8).Render(row) + "\n")
 			} else {
 				queueSb.WriteString(row + "\n")
 			}
 		}
-	}
+	} else {
+		queueSb.WriteString(lipgloss.NewStyle().Bold(true).Render("Download Queue:") + "\n")
+		tasks := m.queue.GetTasks()
+		if len(tasks) == 0 {
+			queueSb.WriteString("  Queue is empty. Enter a GGUF URL above to start downloading.\n")
+		} else {
+			for idx, t := range tasks {
+				statusStr := ""
+				switch t.Status {
+				case model.StatusQueued:
+					statusStr = StyleBadgeStopped.Render(" QUEUED ")
+				case model.StatusDownloading:
+					statusStr = StyleBadgeRunning.Render(" DOWNLOADING ") + fmt.Sprintf(" %.1f KB/s", t.SpeedKBps)
+				case model.StatusPaused:
+					statusStr = StyleBadgeStarting.Render(" PAUSED ")
+				case model.StatusCompleted:
+					statusStr = StyleBadgeRunning.Render(" COMPLETED ")
+				case model.StatusFailed:
+					statusStr = StyleBadgeFailed.Render(" FAILED ") + fmt.Sprintf(": %v", t.Error)
+				case model.StatusCanceled:
+					statusStr = StyleBadgeStopped.Render(" CANCELED ")
+				}
 
-	queueHeight := height - panelHeight - 16
-	if queueHeight < 4 {
-		queueHeight = 4
+				progressFraction := 0.0
+				if t.TotalSize > 0 {
+					progressFraction = float64(t.Downloaded) / float64(t.TotalSize)
+				}
+				progressBar := renderProgressBar(20, progressFraction)
+
+				row := fmt.Sprintf("%-20s %s %s (%s / %s)",
+					t.FileName, progressBar, statusStr, formatSize(t.Downloaded), formatSize(t.TotalSize),
+				)
+
+				if m.focus == FocusQueue && idx == m.selectedTaskIdx {
+					queueSb.WriteString(StyleSelectedListItem.Width(width - 8).Render(row) + "\n")
+				} else {
+					queueSb.WriteString(row + "\n")
+				}
+			}
+		}
 	}
 
 	panelBorderQueue := lipgloss.NewStyle().
@@ -360,7 +477,7 @@ func (m *DownloaderModel) View(width int, height int) string {
 		BorderForeground(ColorBorder).
 		Width(width - 6).
 		Height(queueHeight)
-	if m.focus == FocusQueue {
+	if m.focus == FocusQueue || m.focus == FocusFileList {
 		panelBorderQueue = panelBorderQueue.BorderForeground(ColorPrimary)
 	}
 
@@ -368,16 +485,27 @@ func (m *DownloaderModel) View(width int, height int) string {
 
 	// Help instructions
 	var helpKeys []string
-	helpKeys = append(helpKeys, fmt.Sprintf("%s Navigation", StyleHelpKey.Render("[Tab/Shift-Tab]")))
-	if m.focus == FocusURL || m.focus == FocusFilename {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Start Download", StyleHelpKey.Render("[Enter]")))
-	} else if m.focus == FocusQueue {
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Pause/Resume", StyleHelpKey.Render("[P]")))
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel/Remove", StyleHelpKey.Render("[C]")))
+	if m.focus == FocusFileList {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Move Selection", StyleHelpKey.Render("[Up/Down/j/k]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Download", StyleHelpKey.Render("[Enter]")))
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel", StyleHelpKey.Render("[Esc]")))
+	} else {
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Navigation", StyleHelpKey.Render("[Tab/Shift-Tab]")))
+		if m.focus == FocusURL || m.focus == FocusFilename {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Start Download", StyleHelpKey.Render("[Enter]")))
+		} else if m.focus == FocusQueue {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Pause/Resume", StyleHelpKey.Render("[P]")))
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Cancel/Remove", StyleHelpKey.Render("[C]")))
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Clear Finished", StyleHelpKey.Render("[X]")))
+		}
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 	}
-	helpKeys = append(helpKeys, fmt.Sprintf("%s Return to Browser", StyleHelpKey.Render("[Esc]")))
 
 	sb.WriteString("  " + strings.Join(helpKeys, "  ") + "\n")
+
+	if m.focus != FocusFileList && len(m.queue.GetTasks()) > 0 {
+		sb.WriteString("\n  " + StyleHelp.Render("Tip: Press [Tab] to focus the queue, use [Up/Down/j/k] to select a task, [P] to Pause/Resume, [C] to Cancel/Remove, and [X] to Clear Finished.") + "\n")
+	}
 
 	boxWidth := width - 4
 	if boxWidth < 50 {
@@ -401,7 +529,7 @@ func (m *DownloaderModel) resolveHFRepo(repoID string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := model.ListHFModelFiles(repoID, token)
 		if err != nil {
-			return hfResolveMsg{err: err}
+			return hfResolveMsg{repoID: repoID, err: err}
 		}
 		return hfResolveMsg{repoID: repoID, files: files}
 	}

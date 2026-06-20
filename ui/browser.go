@@ -48,6 +48,7 @@ const (
 	StepDetailsPanel
 	StepLaunchDashboard
 	StepDownloadLifecycle
+	StepHFToken
 	StepFinished
 )
 
@@ -96,6 +97,7 @@ type BrowserModel struct {
 	profileCreatorModel *ProfileCreatorModel
 	onboardingActive    bool
 	onboardingStep      OnboardingStep
+	onboardingTokenInput textinput.Model
 	focusRight          bool
 }
 
@@ -104,6 +106,12 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 	ti.Placeholder = "Type to search..."
 	ti.CharLimit = 156
 	ti.Width = 30
+
+	tokenTi := textinput.New()
+	tokenTi.Placeholder = "Enter Hugging Face Token (optional)..."
+	tokenTi.CharLimit = 128
+	tokenTi.Width = 40
+	tokenTi.SetValue(cfg.HFToken)
 
 	q := model.NewDownloadQueue(cfg.Paths.Models, cfg.HFToken)
 
@@ -124,6 +132,7 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 		downloaderModel:     NewDownloaderModel(cfg, q),
 		onboardingActive:    !cfg.OnboardingCompleted && flag.Lookup("test.v") == nil,
 		onboardingStep:      StepWelcome,
+		onboardingTokenInput: tokenTi,
 	}
 }
 
@@ -290,25 +299,56 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.onboardingActive {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "enter", "space", "n", "N":
-				if m.onboardingStep == StepFinished {
+			if m.onboardingStep == StepHFToken {
+				switch keyMsg.String() {
+				case "enter":
+					tokenValue := strings.TrimSpace(m.onboardingTokenInput.Value())
+					m.config.HFToken = tokenValue
+					m.downloadQueue.UpdateToken(tokenValue)
+					_ = m.config.Save()
+					m.onboardingTokenInput.Blur()
+					m.onboardingStep++
+				case "esc":
 					m.onboardingActive = false
 					m.config.OnboardingCompleted = true
 					_ = m.config.Save()
-				} else {
-					m.onboardingStep++
-				}
-			case "p", "P", "b", "B":
-				if m.onboardingStep > StepWelcome {
+				case "p", "P", "b", "B":
+					m.onboardingTokenInput.Blur()
 					m.onboardingStep--
+				default:
+					var cmd tea.Cmd
+					m.onboardingTokenInput, cmd = m.onboardingTokenInput.Update(msg)
+					if cmd != nil {
+						cmds = append(cmds, cmd)
+					}
 				}
-			case "esc", "q", "Q":
-				m.onboardingActive = false
-				m.config.OnboardingCompleted = true
-				_ = m.config.Save()
+			} else {
+				switch keyMsg.String() {
+				case "enter", "space", "n", "N":
+					if m.onboardingStep == StepFinished {
+						m.onboardingActive = false
+						m.config.OnboardingCompleted = true
+						_ = m.config.Save()
+					} else {
+						m.onboardingStep++
+						if m.onboardingStep == StepHFToken {
+							m.onboardingTokenInput.Focus()
+						}
+					}
+				case "p", "P", "b", "B":
+					if m.onboardingStep > StepWelcome {
+						m.onboardingStep--
+						if m.onboardingStep == StepHFToken {
+							m.onboardingTokenInput.Focus()
+						}
+					}
+				case "esc", "q", "Q":
+					m.onboardingActive = false
+					m.config.OnboardingCompleted = true
+					_ = m.config.Save()
+				}
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		}
 	}
 
@@ -385,6 +425,14 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, discoverCmd(m.config.Paths.Models))
 		}
 		cmds = append(cmds, m.readDownloadQueueChan())
+
+	case hfResolveMsg:
+		if m.downloaderModel != nil {
+			_, cmd := m.downloaderModel.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 
 	case updateMsg:
 		if m.lifecycleModel != nil {
@@ -599,10 +647,17 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if m.screenMode == ScreenDownloader && m.downloaderModel != nil {
 			switch msg.String() {
 			case "esc":
-				m.downloaderModel.urlInput.Blur()
-				m.downloaderModel.filenameInput.Blur()
-				m.screenMode = ScreenBrowser
-				m.rebuildSidebar()
+				if m.downloaderModel.focus == FocusFileList {
+					m.downloaderModel.resolvedFiles = nil
+					m.downloaderModel.repoID = ""
+					m.downloaderModel.focus = FocusURL
+					m.downloaderModel.urlInput.Focus()
+				} else {
+					m.downloaderModel.urlInput.Blur()
+					m.downloaderModel.filenameInput.Blur()
+					m.screenMode = ScreenBrowser
+					m.rebuildSidebar()
+				}
 			default:
 				_, cmd := m.downloaderModel.Update(msg)
 				if cmd != nil {
@@ -1277,6 +1332,9 @@ func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
 	case StepDownloadLifecycle:
 		stepTitle = "4. Downloader & Lifecycle Manager"
 		stepDesc = "Additional utility panels are accessible via hotkeys:\n- Press [D] to open the Downloader to pull models directly via URL.\n- Press [U] to open the Lifecycle Manager (check/apply updates or rollback backups)."
+	case StepHFToken:
+		stepTitle = "5. Hugging Face Access (Optional)"
+		stepDesc = "To download gated models (e.g. Llama, Gemma) or private repos, configure your HF Token here:\n\n" + m.onboardingTokenInput.View() + "\n\nPress [Enter] to save and continue."
 	case StepFinished:
 		stepTitle = "Tour Completed!"
 		stepDesc = "You are all set to manage local AI models!\n\nPress [Enter / Space / Esc] to exit the tour and start exploring."
@@ -1291,6 +1349,8 @@ func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
 		navHelp = fmt.Sprintf("  %s Next  %s Skip Tour", StyleHelpKey.Render("[Enter/Space]"), StyleHelpKey.Render("[Esc]"))
 	} else if m.onboardingStep == StepFinished {
 		navHelp = fmt.Sprintf("  %s Finish Tour", StyleHelpKey.Render("[Enter/Space]"))
+	} else if m.onboardingStep == StepHFToken {
+		navHelp = fmt.Sprintf("  %s Save & Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter]"), StyleHelpKey.Render("[P/B]"), StyleHelpKey.Render("[Esc]"))
 	} else {
 		navHelp = fmt.Sprintf("  %s Next  %s Back  %s Skip Tour", StyleHelpKey.Render("[Enter/Space]"), StyleHelpKey.Render("[P/B]"), StyleHelpKey.Render("[Esc]"))
 	}

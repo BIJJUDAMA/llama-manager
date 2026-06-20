@@ -72,3 +72,41 @@ func TestDownloadQueueFlow(t *testing.T) {
 		t.Errorf("expected task to be removed from queue after Cancel")
 	}
 }
+
+func TestClearAndRemoveTasks(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "llama-manager-clear-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	q := NewDownloadQueue(tempDir, "hf_mock_token")
+
+	// Add several tasks
+	t1 := q.AddTask("org/repo1", "model1.gguf", 1000, "http://example.com/model1.gguf")
+	t2 := q.AddTask("org/repo2", "model2.gguf", 2000, "http://example.com/model2.gguf")
+	t3 := q.AddTask("org/repo3", "model3.gguf", 3000, "http://example.com/model3.gguf")
+
+	// Set their statuses manually for testing
+	t1.Status = StatusCompleted
+	t2.Status = StatusDownloading
+	t3.Status = StatusFailed
+
+	// Clear finished should remove t1 and t3, but keep t2
+	q.ClearFinishedTasks()
+
+	tasks := q.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task remaining, got %d", len(tasks))
+	}
+	if tasks[0] != t2 {
+		t.Errorf("expected remaining task to be t2")
+	}
+
+	// Remove task t2 using RemoveTask
+	q.RemoveTask(t2)
+	if len(q.GetTasks()) != 0 {
+		t.Errorf("expected 0 tasks remaining after RemoveTask")
+	}
+}
+

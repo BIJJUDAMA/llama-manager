@@ -315,6 +315,7 @@ func TestBrowserDownloaderHFRepo(t *testing.T) {
 	}()
 
 	cfg := config.DefaultConfig()
+	cfg.HFToken = "dummy_token"
 	srv := runner.NewServerRunner("")
 	bm := NewBrowserModel(cfg, srv)
 
@@ -352,6 +353,93 @@ func TestBrowserDownloaderHFRepo(t *testing.T) {
 		t.Errorf("expected task filename to be 'gemma-4-E4B-it-Q4_K_M.gguf', got %q", task.FileName)
 	}
 	expectedURL := "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf"
+	if task.URL != expectedURL {
+		t.Errorf("expected task URL to be %q, got %q", expectedURL, task.URL)
+	}
+}
+
+func TestBrowserDownloaderHFRepoResolve(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	cfg.HFToken = "dummy_token"
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// 1. Transition to Downloader screen
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	bm = m.(*BrowserModel)
+
+	// 2. Type Repo ID: "unsloth/gemma-4-E4B-it-GGUF"
+	for _, char := range "unsloth/gemma-4-E4B-it-GGUF" {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+		bm = m.(*BrowserModel)
+	}
+
+	// 3. Press Enter without typing a filename
+	m, cmd := bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if cmd == nil {
+		t.Fatalf("expected an async resolving command to be returned, got nil")
+	}
+	if !bm.downloaderModel.resolving {
+		t.Errorf("expected resolving to be true after Enter on repository")
+	}
+
+	// 4. Send hfResolveMsg to simulate resolving completion
+	files := []model.HFSibling{
+		{Rpath: "file1.gguf", Size: 100},
+		{Rpath: "file2.gguf", Size: 200},
+	}
+	m, _ = bm.Update(hfResolveMsg{repoID: "unsloth/gemma-4-E4B-it-GGUF", files: files})
+	bm = m.(*BrowserModel)
+
+	if bm.downloaderModel.resolving {
+		t.Errorf("expected resolving to be false after completion")
+	}
+	if bm.downloaderModel.focus != FocusFileList {
+		t.Errorf("expected downloader focus to be FocusFileList, got %v", bm.downloaderModel.focus)
+	}
+	if len(bm.downloaderModel.resolvedFiles) != 2 {
+		t.Errorf("expected 2 resolved files, got %d", len(bm.downloaderModel.resolvedFiles))
+	}
+
+	// 5. Navigate Down/j to choose file2.gguf
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	bm = m.(*BrowserModel)
+	if bm.downloaderModel.selectedFileIdx != 1 {
+		t.Errorf("expected selectedFileIdx to be 1 after pressing j, got %d", bm.downloaderModel.selectedFileIdx)
+	}
+
+	// 6. Press Enter to select file2.gguf
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if bm.downloaderModel.focus != FocusURL {
+		t.Errorf("expected focus to return to FocusURL, got %v", bm.downloaderModel.focus)
+	}
+
+	tasks := bm.downloadQueue.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task in queue, got %d", len(tasks))
+	}
+	task := tasks[0]
+	if task.FileName != "file2.gguf" {
+		t.Errorf("expected task filename to be 'file2.gguf', got %q", task.FileName)
+	}
+	expectedURL := "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/file2.gguf"
 	if task.URL != expectedURL {
 		t.Errorf("expected task URL to be %q, got %q", expectedURL, task.URL)
 	}
@@ -504,6 +592,28 @@ func TestBrowserOnboardingTour(t *testing.T) {
 		t.Errorf("expected onboarding to go back to StepWelcome, got %d", bm.onboardingStep)
 	}
 
+	// Advance to StepHFToken (Welcome -> Sidebar -> Details -> Launch -> Download/Lifecycle -> HFToken)
+	for i := 0; i < 5; i++ {
+		m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		bm = m.(*BrowserModel)
+	}
+	if bm.onboardingStep != StepHFToken {
+		t.Fatalf("expected step to be StepHFToken (5), got %v", bm.onboardingStep)
+	}
+
+	// Simulate typing a token
+	bm.onboardingTokenInput.SetValue("test_token_123")
+	// Press enter on StepHFToken to submit it
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	bm = m.(*BrowserModel)
+
+	if bm.onboardingStep != StepFinished {
+		t.Errorf("expected step to advance to StepFinished, got %v", bm.onboardingStep)
+	}
+	if bm.config.HFToken != "test_token_123" {
+		t.Errorf("expected config HFToken to be test_token_123, got %q", bm.config.HFToken)
+	}
+
 	// Test that background messages like discoverMsg fall through during onboarding
 	bm.onboardingActive = true
 	bm.loading = true
@@ -523,6 +633,72 @@ func TestBrowserOnboardingTour(t *testing.T) {
 		t.Errorf("expected OnboardingCompleted to be set to true in config")
 	}
 }
+
+func TestBrowserDownloaderClearQueue(t *testing.T) {
+	// Backup user config if exists
+	hasUserConfig := false
+	if _, err := os.Stat("config.json"); err == nil {
+		hasUserConfig = true
+		_ = os.Rename("config.json", "config.json.tmp")
+	}
+	defer func() {
+		_ = os.Remove("config.json")
+		if hasUserConfig {
+			_ = os.Rename("config.json.tmp", "config.json")
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	srv := runner.NewServerRunner("")
+	bm := NewBrowserModel(cfg, srv)
+
+	// Transition to Downloader screen
+	m, _ := bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	bm = m.(*BrowserModel)
+
+	// Add two mock tasks manually for testing
+	t1 := bm.downloadQueue.AddTask("org/repo1", "m1.gguf", 100, "http://example.com/m1.gguf")
+	t2 := bm.downloadQueue.AddTask("org/repo2", "m2.gguf", 200, "http://example.com/m2.gguf")
+
+	t1.Status = model.StatusCompleted
+	t2.Status = model.StatusFailed
+
+	// Move focus to download queue
+	// Focus transitions: FocusURL -> FocusFilename -> FocusQueue
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	bm = m.(*BrowserModel)
+
+	if bm.downloaderModel.focus != FocusQueue {
+		t.Fatalf("expected focus to be FocusQueue, got %d", bm.downloaderModel.focus)
+	}
+
+	// 1. Remove t1 individually by selecting it and pressing 'c'
+	bm.downloaderModel.selectedTaskIdx = 0
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	bm = m.(*BrowserModel)
+
+	tasks := bm.downloadQueue.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task remaining, got %d", len(tasks))
+	}
+	if tasks[0] != t2 {
+		t.Errorf("expected remaining task to be t2")
+	}
+
+	// 2. Add t1 back (as completed) and test clearing all finished tasks with 'x'
+	t1 = bm.downloadQueue.AddTask("org/repo1", "m1.gguf", 100, "http://example.com/m1.gguf")
+	t1.Status = model.StatusCompleted
+
+	m, _ = bm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	bm = m.(*BrowserModel)
+
+	if len(bm.downloadQueue.GetTasks()) != 0 {
+		t.Errorf("expected all finished tasks to be cleared, got %d tasks remaining", len(bm.downloadQueue.GetTasks()))
+	}
+}
+
 
 
 
