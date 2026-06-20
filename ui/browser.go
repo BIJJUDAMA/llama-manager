@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -92,13 +95,14 @@ type BrowserModel struct {
 	perfDashboard       *PerformanceDashboardModel
 	monitorModel        *MonitorModel
 	lifecycleModel      *LifecycleModel
-	downloaderModel     *DownloaderModel
-	downloadQueue       *model.DownloadQueue
-	profileCreatorModel *ProfileCreatorModel
-	onboardingActive    bool
-	onboardingStep      OnboardingStep
-	onboardingTokenInput textinput.Model
-	focusRight          bool
+	downloaderModel       *DownloaderModel
+	downloadQueue         *model.DownloadQueue
+	profileCreatorModel   *ProfileCreatorModel
+	onboardingActive      bool
+	onboardingStep        OnboardingStep
+	onboardingTokenInput  textinput.Model
+	focusRight            bool
+	llamaCPPMissingActive bool
 }
 
 func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
@@ -118,21 +122,42 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 	// Apply theme colors
 	ApplyTheme(cfg.Theme)
 
+	// Check if llama.cpp is missing or empty
+	llamaCPPMissing := false
+	dir := cfg.Paths.LlamaCPP
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		llamaCPPMissing = true
+	} else {
+		files, err := os.ReadDir(dir)
+		if err != nil || len(files) == 0 {
+			llamaCPPMissing = true
+		} else {
+			binaryName := "llama-server"
+			if runtime.GOOS == "windows" {
+				binaryName = "llama-server.exe"
+			}
+			if _, err := os.Stat(filepath.Join(dir, binaryName)); os.IsNotExist(err) {
+				llamaCPPMissing = true
+			}
+		}
+	}
+
 	return &BrowserModel{
-		config:              cfg,
-		srvRunner:           srv,
-		loading:             true,
-		searchInput:         ti,
-		serverUIStatus:      UIStatusStopped,
-		screenMode:          ScreenBrowser,
-		sidebarItems:        []SidebarItem{},
-		monitorModel:        NewMonitorModel(srv),
-		lifecycleModel:      NewLifecycleModel(cfg, srv),
-		downloadQueue:       q,
-		downloaderModel:     NewDownloaderModel(cfg, q),
-		onboardingActive:    !cfg.OnboardingCompleted && flag.Lookup("test.v") == nil,
-		onboardingStep:      StepWelcome,
-		onboardingTokenInput: tokenTi,
+		config:                cfg,
+		srvRunner:             srv,
+		loading:               true,
+		searchInput:           ti,
+		serverUIStatus:        UIStatusStopped,
+		screenMode:            ScreenBrowser,
+		sidebarItems:          []SidebarItem{},
+		monitorModel:          NewMonitorModel(srv),
+		lifecycleModel:        NewLifecycleModel(cfg, srv),
+		downloadQueue:         q,
+		downloaderModel:       NewDownloaderModel(cfg, q),
+		onboardingActive:      !cfg.OnboardingCompleted && flag.Lookup("test.v") == nil,
+		onboardingStep:        StepWelcome,
+		onboardingTokenInput:  tokenTi,
+		llamaCPPMissingActive: llamaCPPMissing && flag.Lookup("test.v") == nil,
 	}
 }
 
@@ -380,6 +405,29 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.llamaCPPMissingActive {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "u", "U":
+				m.llamaCPPMissingActive = false
+				m.screenMode = ScreenSettings
+				m.lifecycleModel.RefreshLocalVersion()
+				m.lifecycleModel.RefreshBackupStatus()
+				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
+			case "esc", "enter", "space":
+				m.llamaCPPMissingActive = false
+			case "q", "ctrl+c":
+				_ = m.srvRunner.Stop()
+				return m, tea.Quit
+			}
+		}
+		// Always return early during missing warning popup for all input/mouse messages
+		// so they don't leak, but allow background messages to fall through.
+		switch msg.(type) {
+		case tea.KeyMsg, tea.MouseMsg:
+			return m, tea.Batch(cmds...)
+		}
+	}
 
 	if m.screenMode == ScreenProfileCreator && m.profileCreatorModel != nil {
 		if _, isSizeMsg := msg.(tea.WindowSizeMsg); !isSizeMsg {
@@ -1337,6 +1385,10 @@ func (m *BrowserModel) View() string {
 		onboardingOverlay := m.onboardingOverlayView(m.width, m.height)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, onboardingOverlay)
 	}
+	if m.llamaCPPMissingActive {
+		missingOverlay := m.llamaCPPMissingOverlayView(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, missingOverlay)
+	}
 	return bgView
 }
 
@@ -1443,4 +1495,30 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m *BrowserModel) llamaCPPMissingOverlayView(width, height int) string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("RUNTIME NOT FOUND")))
+	sb.WriteString("  Llama Manager requires the llama.cpp inference runtime to run models,\n")
+	sb.WriteString("  but no installation was found in your llama.cpp folder.\n\n")
+	sb.WriteString("  " + StyleHelpKey.Render("[U]") + " Go to Settings to automatically download & install\n")
+	sb.WriteString("  " + StyleHelpKey.Render("[Esc / Enter]") + " Dismiss this warning\n")
+	sb.WriteString("  " + StyleHelpKey.Render("[Q]") + " Quit Llama Manager\n")
+
+	boxWidth := width - 8
+	if boxWidth < 50 {
+		boxWidth = 50
+	}
+	if boxWidth > 75 {
+		boxWidth = 75
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(ColorPrimary).
+		Padding(1, 2).
+		Width(boxWidth).
+		Render(sb.String())
 }
