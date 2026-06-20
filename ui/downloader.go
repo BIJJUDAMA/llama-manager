@@ -90,7 +90,11 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 						filename = "downloaded_model.gguf"
 					}
 
-					m.queue.AddTask("DirectDownload", filename, 0, urlStr)
+					modelName := filename
+					if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
+						modelName = modelName[:len(modelName)-5]
+					}
+					m.queue.AddTask(modelName, filename, 0, urlStr)
 					m.urlInput.SetValue("")
 					m.filenameInput.SetValue("")
 					m.focus = FocusURL
