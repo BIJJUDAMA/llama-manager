@@ -699,6 +699,38 @@ func TestBrowserDownloaderClearQueue(t *testing.T) {
 	}
 }
 
+type mockModelRuntime struct {
+	instances []runner.InstanceInfo
+}
+
+func (m *mockModelRuntime) Start(modelPath string, opts runner.StartOptions) error { return nil }
+func (m *mockModelRuntime) Stop() error { return nil }
+func (m *mockModelRuntime) StopInstance(port int) error { return nil }
+func (m *mockModelRuntime) GetStatus() (runner.ServerStatus, string, int) { return runner.StatusStopped, "", 0 }
+func (m *mockModelRuntime) GetAllInstances() []runner.InstanceInfo { return m.instances }
+func (m *mockModelRuntime) Capabilities() []runner.TaskType { return nil }
+
+func TestFindAvailablePort(t *testing.T) {
+	srv := &mockModelRuntime{
+		instances: []runner.InstanceInfo{
+			{Port: 50505, ModelPath: "models/model1.gguf"},
+			{Port: 50506, ModelPath: "models/model2.gguf"},
+		},
+	}
+
+	// 1. If starting model1.gguf on 50505 (same model/port), it should return 50505 (no change)
+	port := findAvailablePort(50505, srv, "models/model1.gguf")
+	if port != 50505 {
+		t.Errorf("expected port 50505, got %d", port)
+	}
+
+	// 2. If starting model3.gguf on 50505, since 50505 and 50506 are busy by other models, it should return 50507
+	port = findAvailablePort(50505, srv, "models/model3.gguf")
+	if port != 50507 {
+		t.Errorf("expected port 50507, got %d", port)
+	}
+}
+
 
 
 

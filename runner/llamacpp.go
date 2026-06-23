@@ -153,10 +153,9 @@ func (sr *LlamaCppRuntime) Stop() error {
 // StopInstance terminates the server running on the specified port.
 func (sr *LlamaCppRuntime) StopInstance(port int) error {
 	sr.mu.Lock()
-	defer sr.mu.Unlock()
-
 	inst, exists := sr.instances[port]
 	if !exists {
+		sr.mu.Unlock()
 		return nil
 	}
 
@@ -167,6 +166,10 @@ func (sr *LlamaCppRuntime) StopInstance(port int) error {
 		_ = inst.Cmd.Process.Kill()
 	}
 	delete(sr.instances, port)
+	sr.mu.Unlock()
+
+	// Wait a brief moment for the process to terminate and release the network socket
+	time.Sleep(250 * time.Millisecond)
 	return nil
 }
 
