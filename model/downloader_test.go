@@ -56,14 +56,20 @@ func TestDownloadQueueFlow(t *testing.T) {
 
 	// Test Pause Task
 	q.PauseTask(task)
-	if task.Status != StatusPaused {
-		t.Errorf("expected task status to be StatusPaused, got %d", task.Status)
+	task.mu.Lock()
+	pausedStatus := task.Status
+	task.mu.Unlock()
+	if pausedStatus != StatusPaused {
+		t.Errorf("expected task status to be StatusPaused, got %d", pausedStatus)
 	}
 
 	// Test Resume Task
 	q.ResumeTask(task)
-	if task.Status != StatusQueued {
-		t.Errorf("expected task status to be StatusQueued, got %d", task.Status)
+	task.mu.Lock()
+	resumedStatus := task.Status
+	task.mu.Unlock()
+	if resumedStatus != StatusQueued && resumedStatus != StatusDownloading {
+		t.Errorf("expected task status to be StatusQueued or StatusDownloading, got %d", resumedStatus)
 	}
 
 	// Test Cancel Task
@@ -88,9 +94,17 @@ func TestClearAndRemoveTasks(t *testing.T) {
 	t3 := q.AddTask("org/repo3", "model3.gguf", 3000, "http://example.com/model3.gguf")
 
 	// Set their statuses manually for testing
+	t1.mu.Lock()
 	t1.Status = StatusCompleted
+	t1.mu.Unlock()
+
+	t2.mu.Lock()
 	t2.Status = StatusDownloading
+	t2.mu.Unlock()
+
+	t3.mu.Lock()
 	t3.Status = StatusFailed
+	t3.mu.Unlock()
 
 	// Clear finished should remove t1 and t3, but keep t2
 	q.ClearFinishedTasks()

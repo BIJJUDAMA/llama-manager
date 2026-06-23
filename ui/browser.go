@@ -1455,7 +1455,7 @@ func (m *BrowserModel) View() string {
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, leftView, rightView)
 
 	header := lipgloss.NewStyle().MarginBottom(1).Render(
-		RenderGradient("LLAMA MANAGER — Local AI Control Center", ThemeGradientStart, ThemeGradientEnd),
+		RenderGradient("RUNORA — Local AI Control Center", ThemeGradientStart, ThemeGradientEnd),
 	)
 
 	var footer string
@@ -1496,8 +1496,8 @@ func (m *BrowserModel) onboardingOverlayView(width int, height int) string {
 	var stepTitle, stepDesc string
 	switch m.onboardingStep {
 	case StepWelcome:
-		stepTitle = "Welcome to Llama Manager!"
-		stepDesc = "Llama Manager is your local AI control center.\nThis quick tour will guide you through all the core features.\n\nPress [Enter / Space] to begin, or [Esc] to skip."
+		stepTitle = "Welcome to Runora!"
+		stepDesc = "Runora is your local AI control center.\nThis quick tour will guide you through all the core features.\n\nPress [Enter / Space] to begin, or [Esc] to skip."
 	case StepModelSidebar:
 		stepTitle = "1. Model Discovery & Sidebar"
 		stepDesc = "On the left is the Models Sidebar.\n- Models are recursively discovered under your models/ directory.\n- Navigate them using [Up / Down Arrow keys].\n- Press [F] to toggle favoriting a model for quick access."
@@ -1598,11 +1598,11 @@ func (m *BrowserModel) llamaCPPMissingOverlayView(width, height int) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("RUNTIME NOT FOUND")))
-	sb.WriteString("  Llama Manager requires the llama.cpp inference runtime to run models,\n")
+	sb.WriteString("  Runora requires the llama.cpp inference runtime to run models,\n")
 	sb.WriteString("  but no installation was found in your llama.cpp folder.\n\n")
 	sb.WriteString("  " + StyleHelpKey.Render("[U]") + " Go to Settings to automatically download & install\n")
 	sb.WriteString("  " + StyleHelpKey.Render("[Esc / Enter]") + " Dismiss this warning\n")
-	sb.WriteString("  " + StyleHelpKey.Render("[Q]") + " Quit Llama Manager\n")
+	sb.WriteString("  " + StyleHelpKey.Render("[Q]") + " Quit Runora\n")
 
 	boxWidth := width - 8
 	if boxWidth < 50 {
