@@ -48,6 +48,7 @@ type Config struct {
 	LastSelectedModel   string            `json:"last_selected_model"`
 	Theme               string            `json:"theme"`
 	ModelProfiles       map[string]string `json:"model_profiles"`
+	ModelTasks          map[string]string `json:"model_tasks"`
 	HFToken             string            `json:"hf_token"`
 	OnboardingCompleted bool              `json:"onboarding_completed"`
 
@@ -95,6 +96,9 @@ func Load() (*Config, error) {
 	if cfg.ModelProfiles == nil {
 		cfg.ModelProfiles = make(map[string]string)
 	}
+	if cfg.ModelTasks == nil {
+		cfg.ModelTasks = make(map[string]string)
+	}
 	if cfg.Favorites == nil {
 		cfg.Favorites = []string{}
 	}
@@ -137,6 +141,7 @@ func defaultConfig(dir string) *Config {
 		LastSelectedModel:   "",
 		Theme:               "forest",
 		ModelProfiles:       make(map[string]string),
+		ModelTasks:          make(map[string]string),
 		OnboardingCompleted: false,
 		configPath:          filepath.Join(dir, configFileName),
 	}
