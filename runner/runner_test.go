@@ -13,17 +13,25 @@ func TestRunnerBinaryNotFound(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	runner := NewServerRunner(tempDir)
+	runner := NewLlamaCppRuntime(tempDir)
 
 	// Try to start a server with a non-existent llama.cpp dir
-	err = runner.Start(filepath.Join(tempDir, "missing-dir"), "some-model.gguf", 2048, 4, 999, 512, "127.0.0.1", 50505)
+	err = runner.Start("some-model.gguf", StartOptions{
+		LlamaCppDir: filepath.Join(tempDir, "missing-dir"),
+		ContextSize: 2048,
+		Threads:     4,
+		GPULayers:   999,
+		BatchSize:   512,
+		Host:        "127.0.0.1",
+		Port:        50505,
+	})
 	if err == nil {
 		t.Errorf("expected error starting server with missing directory, got nil")
 	}
 }
 
 func TestMultiInstanceTracking(t *testing.T) {
-	runner := NewServerRunner("")
+	runner := NewLlamaCppRuntime("")
 
 	// Initially, it should have no active instances
 	if len(runner.GetAllInstances()) != 0 {

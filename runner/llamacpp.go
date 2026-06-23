@@ -16,14 +16,6 @@ import (
 	"time"
 )
 
-type ServerStatus int
-
-const (
-	StatusStopped ServerStatus = iota
-	StatusRunning
-	StatusFailed
-)
-
 type ServerInstance struct {
 	Port       int
 	ModelPath  string
@@ -34,35 +26,27 @@ type ServerInstance struct {
 	cancelFunc context.CancelFunc
 }
 
-type InstanceInfo struct {
-	Port      int
-	ModelPath string
-	PID       int
-	Uptime    time.Duration
-	LogFile   string
-}
-
-type ServerRunner struct {
+type LlamaCppRuntime struct {
 	mu        sync.Mutex
 	logDir    string
 	instances map[int]*ServerInstance
 }
 
-func NewServerRunner(logDir string) *ServerRunner {
-	return &ServerRunner{
+func NewLlamaCppRuntime(logDir string) *LlamaCppRuntime {
+	return &LlamaCppRuntime{
 		logDir:    logDir,
 		instances: make(map[int]*ServerInstance),
 	}
 }
 
 // Start launches the llama-server on the specified port.
-func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint32, threads int, gpuLayers int, batchSize int, host string, port int) error {
+func (sr *LlamaCppRuntime) Start(modelPath string, opts StartOptions) error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
 	// Check if already running on this port
-	if _, exists := sr.instances[port]; exists {
-		return fmt.Errorf("a server is already running on port %d", port)
+	if _, exists := sr.instances[opts.Port]; exists {
+		return fmt.Errorf("a server is already running on port %d", opts.Port)
 	}
 
 	// Resolve binary name
@@ -70,7 +54,7 @@ func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint
 	if runtime.GOOS == "windows" {
 		binaryName = "llama-server.exe"
 	}
-	binaryPath := filepath.Join(llamaCppDir, binaryName)
+	binaryPath := filepath.Join(opts.LlamaCppDir, binaryName)
 
 	// Check if binary exists
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
@@ -80,24 +64,24 @@ func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint
 	// Prepare arguments
 	args := []string{
 		"--model", modelPath,
-		"--host", host,
-		"--port", fmt.Sprintf("%d", port),
+		"--host", opts.Host,
+		"--port", fmt.Sprintf("%d", opts.Port),
 	}
-	if ctxSize > 0 {
-		args = append(args, "--ctx-size", fmt.Sprintf("%d", ctxSize))
+	if opts.ContextSize > 0 {
+		args = append(args, "--ctx-size", fmt.Sprintf("%d", opts.ContextSize))
 	}
-	if threads > 0 {
-		args = append(args, "--threads", fmt.Sprintf("%d", threads))
+	if opts.Threads > 0 {
+		args = append(args, "--threads", fmt.Sprintf("%d", opts.Threads))
 	}
-	if gpuLayers >= 0 {
-		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", gpuLayers))
+	if opts.GPULayers >= 0 {
+		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", opts.GPULayers))
 	}
-	if batchSize > 0 {
-		args = append(args, "--batch-size", fmt.Sprintf("%d", batchSize))
+	if opts.BatchSize > 0 {
+		args = append(args, "--batch-size", fmt.Sprintf("%d", opts.BatchSize))
 	}
 
 	// Open log file specific to this port
-	logFileName := fmt.Sprintf("llama-server-%d.log", port)
+	logFileName := fmt.Sprintf("llama-server-%d.log", opts.Port)
 	logFilePath := filepath.Join(sr.logDir, logFileName)
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -126,7 +110,7 @@ func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint
 	}
 
 	inst := &ServerInstance{
-		Port:       port,
+		Port:       opts.Port,
 		ModelPath:  modelPath,
 		PID:        pid,
 		Cmd:        cmd,
@@ -134,7 +118,7 @@ func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint
 		LogFile:    logFilePath,
 		cancelFunc: cancel,
 	}
-	sr.instances[port] = inst
+	sr.instances[opts.Port] = inst
 
 	// Monitor termination in goroutine
 	go func(p int, lf *os.File) {
@@ -144,13 +128,13 @@ func (sr *ServerRunner) Start(llamaCppDir string, modelPath string, ctxSize uint
 		sr.mu.Lock()
 		defer sr.mu.Unlock()
 		delete(sr.instances, p)
-	}(port, logFile)
+	}(opts.Port, logFile)
 
 	return nil
 }
 
 // Stop terminates ALL running servers.
-func (sr *ServerRunner) Stop() error {
+func (sr *LlamaCppRuntime) Stop() error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
@@ -167,7 +151,7 @@ func (sr *ServerRunner) Stop() error {
 }
 
 // StopInstance terminates the server running on the specified port.
-func (sr *ServerRunner) StopInstance(port int) error {
+func (sr *LlamaCppRuntime) StopInstance(port int) error {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
@@ -187,7 +171,7 @@ func (sr *ServerRunner) StopInstance(port int) error {
 }
 
 // GetStatus returns the status, running model path, and port of the primary running server (50505 or first found).
-func (sr *ServerRunner) GetStatus() (ServerStatus, string, int) {
+func (sr *LlamaCppRuntime) GetStatus() (ServerStatus, string, int) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
@@ -209,7 +193,7 @@ func (sr *ServerRunner) GetStatus() (ServerStatus, string, int) {
 }
 
 // GetAllInstances returns status information for all active servers.
-func (sr *ServerRunner) GetAllInstances() []InstanceInfo {
+func (sr *LlamaCppRuntime) GetAllInstances() []InstanceInfo {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 
@@ -232,6 +216,10 @@ func (sr *ServerRunner) GetAllInstances() []InstanceInfo {
 		return list[i].Port < list[j].Port
 	})
 	return list
+}
+
+func (sr *LlamaCppRuntime) Capabilities() []TaskType {
+	return []TaskType{TaskTextGeneration, TaskEmbedding}
 }
 
 // GetMemoryUsage queries physical memory usage (RSS) of a process in MB.
