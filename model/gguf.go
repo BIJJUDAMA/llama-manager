@@ -10,6 +10,7 @@ import (
 )
 
 type GGUFMetadata struct {
+	ID            string
 	Name          string
 	Architecture  string
 	ContextLength uint32
@@ -22,6 +23,8 @@ type GGUFMetadata struct {
 	HeadsKV       uint32
 	EmbeddingLen  uint32
 	HeadDim       uint32
+	Runtime       string
+	Task          string
 }
 
 // ValueType is the GGUF metadata value type enum
@@ -342,6 +345,14 @@ func ParseGGUF(filePath string) (*GGUFMetadata, error) {
 		if gr.err == nil {
 			meta.ParamCount = totalParams
 		}
+	}
+
+	meta.ID = filepath.Base(filePath)
+	meta.Runtime = "llama.cpp"
+	if meta.EmbeddingLen > 0 {
+		meta.Task = "EMBEDDING"
+	} else {
+		meta.Task = "TEXT_GENERATION"
 	}
 
 	return meta, nil

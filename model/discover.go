@@ -30,7 +30,8 @@ func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 		if err != nil {
 			return nil
 		}
-		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".gguf") {
+		extLower := strings.ToLower(filepath.Ext(d.Name()))
+		if !d.IsDir() && (extLower == ".gguf" || extLower == ".onnx") {
 			info, statErr := d.Info()
 			if statErr != nil {
 				return nil
@@ -44,9 +45,28 @@ func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 				meta = entry.Metadata
 				meta.FilePath = path
 			} else {
-				var parseErr error
-				meta, parseErr = ParseGGUF(path)
-				if parseErr == nil {
+				if extLower == ".gguf" {
+					var parseErr error
+					meta, parseErr = ParseGGUF(path)
+					if parseErr == nil {
+						cache.Entries[cacheKey] = &GGUFCacheEntry{
+							Metadata: meta,
+							ModTime:  info.ModTime().Unix(),
+							Size:     info.Size(),
+						}
+						cacheUpdated = true
+					}
+				} else if extLower == ".onnx" {
+					meta = &GGUFMetadata{
+						ID:           filepath.Base(path),
+						Name:         filepath.Base(path),
+						FilePath:     path,
+						FileSize:     info.Size(),
+						Runtime:      "ONNX Runtime",
+						Task:         "TEXT_GENERATION",
+						Architecture: "ONNX",
+						Quantization: "Float32",
+					}
 					cache.Entries[cacheKey] = &GGUFCacheEntry{
 						Metadata: meta,
 						ModTime:  info.ModTime().Unix(),
@@ -57,6 +77,19 @@ func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 			}
 
 			if meta != nil {
+				// Apply automatic task heuristics based on folder name
+				dirLower := strings.ToLower(filepath.ToSlash(filepath.Dir(path)))
+				if strings.Contains(dirLower, "/embedding") {
+					meta.Task = "EMBEDDING"
+				} else if strings.Contains(dirLower, "/speech") {
+					meta.Task = "SPEECH_TO_TEXT"
+				} else if strings.Contains(dirLower, "/vision") {
+					meta.Task = "VISION"
+				} else if strings.Contains(dirLower, "/diffusion") {
+					meta.Task = "IMAGE_GENERATION"
+				} else if strings.Contains(dirLower, "/reranker") {
+					meta.Task = "RERANKING"
+				}
 				models = append(models, meta)
 			}
 		}
