@@ -27,7 +27,7 @@ func TestBrowserModelInit(t *testing.T) {
 	cfg.Paths.Models = modelsDir
 	cfg.Paths.Cache = cacheDir
 
-	srv := runner.NewServerRunner(cacheDir)
+	srv := runner.NewMultiRuntimeManager(cacheDir)
 	model := NewBrowserModel(cfg, srv)
 
 	if model.loading != true {
@@ -42,7 +42,7 @@ func TestBrowserModelInit(t *testing.T) {
 
 func TestBrowserSidebarRebuild(t *testing.T) {
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Add mock GGUF models
@@ -80,7 +80,7 @@ func TestBrowserSidebarRebuild(t *testing.T) {
 
 func TestBrowserBenchmarkTrigger(t *testing.T) {
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Add mock GGUF models
@@ -113,7 +113,7 @@ func TestBrowserBenchmarkTrigger(t *testing.T) {
 
 func TestBrowserMonitorTrigger(t *testing.T) {
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Initial screen mode is ScreenBrowser
@@ -135,7 +135,7 @@ func TestBrowserMonitorTrigger(t *testing.T) {
 
 func TestBrowserSettingsTrigger(t *testing.T) {
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Initial screen mode is ScreenBrowser
@@ -170,7 +170,7 @@ func TestBrowserTokenConfiguration(t *testing.T) {
 	}()
 
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Transition to settings
@@ -206,7 +206,7 @@ func TestBrowserTokenConfiguration(t *testing.T) {
 
 func TestBrowserDownloaderTrigger(t *testing.T) {
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Initial screen mode is ScreenBrowser
@@ -241,7 +241,7 @@ func TestBrowserDownloaderDirectURL(t *testing.T) {
 	}()
 
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// 1. Transition to Downloader screen
@@ -316,7 +316,7 @@ func TestBrowserDownloaderHFRepo(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.HFToken = "dummy_token"
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// 1. Transition to Downloader screen
@@ -374,7 +374,7 @@ func TestBrowserDownloaderHFRepoResolve(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.HFToken = "dummy_token"
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// 1. Transition to Downloader screen
@@ -454,7 +454,7 @@ func TestBrowserCreateCustomProfile(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Paths.Profiles = tempProfilesDir
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Set some mock models so we can enter Dashboard
@@ -567,7 +567,7 @@ func TestBrowserOnboardingTour(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.OnboardingCompleted = false // force onboarding
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 	bm.onboardingActive = true // force onboarding in test environment
 
@@ -649,7 +649,7 @@ func TestBrowserDownloaderClearQueue(t *testing.T) {
 	}()
 
 	cfg := config.DefaultConfig()
-	srv := runner.NewServerRunner("")
+	srv := runner.NewMultiRuntimeManager("")
 	bm := NewBrowserModel(cfg, srv)
 
 	// Transition to Downloader screen

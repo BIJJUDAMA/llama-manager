@@ -49,7 +49,7 @@ func main() {
 		}
 	}
 
-	srv := runner.NewServerRunner(cfg.Paths.Cache)
+	srv := runner.NewMultiRuntimeManager(cfg.Paths.Cache)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

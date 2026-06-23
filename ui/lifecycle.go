@@ -48,7 +48,7 @@ type appCheckMsg struct {
 }
 
 type LifecycleModel struct {
-	srvRunner        *runner.ServerRunner
+	srvRunner        runner.ModelRuntime
 	config           *config.Config
 	specs            *hardware.HardwareSpecs
 	state            LifecycleState
@@ -58,6 +58,7 @@ type LifecycleModel struct {
 	latestTagName    string
 	latestRelease    *runner.GithubRelease
 	matchedAsset     *runner.ReleaseAsset
+	matchedCudart    *runner.ReleaseAsset
 	downloadProgress float64
 	actionMsg        string
 	err              error
@@ -86,7 +87,7 @@ func resolveAppVersion() string {
 	return "dev"
 }
 
-func NewLifecycleModel(cfg *config.Config, srv *runner.ServerRunner) *LifecycleModel {
+func NewLifecycleModel(cfg *config.Config, srv runner.ModelRuntime) *LifecycleModel {
 	specs, _ := hardware.DetectHardware()
 	if specs == nil {
 		specs = &hardware.HardwareSpecs{OS: runtime.GOOS}

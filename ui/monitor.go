@@ -11,13 +11,13 @@ import (
 )
 
 type MonitorModel struct {
-	srvRunner     *runner.ServerRunner
+	srvRunner     runner.ModelRuntime
 	instances     []runner.InstanceInfo
 	selected      int
 	width, height int
 }
 
-func NewMonitorModel(srv *runner.ServerRunner) *MonitorModel {
+func NewMonitorModel(srv runner.ModelRuntime) *MonitorModel {
 	return &MonitorModel{
 		srvRunner: srv,
 		instances: []runner.InstanceInfo{},

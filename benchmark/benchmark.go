@@ -46,7 +46,7 @@ func RunBenchmark(llamaCppDir string, m *model.GGUFMetadata, specs *hardware.Har
 	if onStep != nil {
 		onStep(0) // StepBooting
 	}
-	benchRunner := runner.NewServerRunner(cfg.Paths.Cache)
+	benchRunner := runner.NewLlamaCppRuntime(cfg.Paths.Cache)
 
 	startTime := time.Now()
 	port := 9091 // Dedicated benchmarking port
@@ -55,16 +55,15 @@ func RunBenchmark(llamaCppDir string, m *model.GGUFMetadata, specs *hardware.Har
 	_ = benchRunner.Stop()
 
 	// Launch llama-server with low-context fast settings for benchmarking
-	err := benchRunner.Start(
-		llamaCppDir,
-		m.FilePath,
-		512, // low context for quick initialization
-		4,   // standard threads
-		999, // offload layers
-		512, // batch size
-		"127.0.0.1",
-		port,
-	)
+	err := benchRunner.Start(m.FilePath, runner.StartOptions{
+		LlamaCppDir: llamaCppDir,
+		ContextSize: 512, // low context for quick initialization
+		Threads:     4,   // standard threads
+		GPULayers:   999, // offload layers
+		BatchSize:   512, // batch size
+		Host:        "127.0.0.1",
+		Port:        port,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to start benchmark server: %w", err)
 	}

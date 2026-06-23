@@ -72,7 +72,7 @@ type SidebarItem struct {
 
 type BrowserModel struct {
 	config              *config.Config
-	srvRunner           *runner.ServerRunner
+	srvRunner           runner.ModelRuntime
 	models              []*model.GGUFMetadata
 	filtered            []int // indices in m.models
 	selected            int   // index in m.sidebarItems
@@ -82,21 +82,21 @@ type BrowserModel struct {
 	searchActive        bool
 	searchInput         textinput.Model
 	width, height       int
-
-	serverUIStatus      ServerUIStatus
-	serverErr           error
+	sidebarItems        []SidebarItem
+	selectedModelIdx    int // tracks which model is highlighted, independent of details toggle
 	runningModelPath    string
 	hardwareSpecs       *hardware.HardwareSpecs
 	profiles            []*profile.Profile
+	serverUIStatus      ServerUIStatus
+	serverErr           error
 	screenMode          ScreenMode
 	dashboard           *DashboardModel
-	sidebarItems        []SidebarItem
-	benchmarkProgress   *BenchmarkProgressModel
 	perfDashboard       *PerformanceDashboardModel
+	benchmarkProgress   *BenchmarkProgressModel
 	monitorModel        *MonitorModel
+	downloaderModel     *DownloaderModel
+	downloadQueue       *model.DownloadQueue
 	lifecycleModel      *LifecycleModel
-	downloaderModel       *DownloaderModel
-	downloadQueue         *model.DownloadQueue
 	profileCreatorModel   *ProfileCreatorModel
 	onboardingActive      bool
 	onboardingStep        OnboardingStep
@@ -105,7 +105,7 @@ type BrowserModel struct {
 	llamaCPPMissingActive bool
 }
 
-func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel {
+func NewBrowserModel(cfg *config.Config, srv runner.ModelRuntime) *BrowserModel {
 	ti := textinput.New()
 	ti.Placeholder = "Type to search..."
 	ti.CharLimit = 156
@@ -161,6 +161,15 @@ func NewBrowserModel(cfg *config.Config, srv *runner.ServerRunner) *BrowserModel
 	}
 }
 
+func (m *BrowserModel) isModelRunning(filePath string) bool {
+	for _, inst := range m.srvRunner.GetAllInstances() {
+		if inst.ModelPath == filePath {
+			return true
+		}
+	}
+	return false
+}
+
 type discoverMsg struct {
 	models []*model.GGUFMetadata
 	err    error
@@ -177,9 +186,17 @@ type startServerMsg struct {
 	err error
 }
 
-func startServerCmd(srv *runner.ServerRunner, llamaCppDir string, modelPath string, ctxSize uint32, threads int, gpuLayers int, batchSize int, host string, port int) tea.Cmd {
+func startServerCmd(srv runner.ModelRuntime, llamaCppDir string, modelPath string, ctxSize uint32, threads int, gpuLayers int, batchSize int, host string, port int) tea.Cmd {
 	return func() tea.Msg {
-		err := srv.Start(llamaCppDir, modelPath, ctxSize, threads, gpuLayers, batchSize, host, port)
+		err := srv.Start(modelPath, runner.StartOptions{
+			LlamaCppDir: llamaCppDir,
+			ContextSize: ctxSize,
+			Threads:     threads,
+			GPULayers:   gpuLayers,
+			BatchSize:   batchSize,
+			Host:        host,
+			Port:        port,
+		})
 		return startServerMsg{err: err}
 	}
 }
@@ -467,6 +484,11 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.models = msg.models
+			for _, mod := range m.models {
+				if override, ok := m.config.ModelTasks[mod.FilePath]; ok {
+					mod.Task = override
+				}
+			}
 			m.filterModels()
 
 			// Select last selected model if found
@@ -611,10 +633,10 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.config.Save()
 					m.rebuildSidebar()
 
-					// Stop server and launch with profile settings
+					// Stop server on target port and launch with profile settings
 					m.serverUIStatus = UIStatusStarting
 					m.serverErr = nil
-					_ = m.srvRunner.Stop()
+					_ = m.srvRunner.StopInstance(p.Port)
 
 					cmds = append(cmds, startServerCmd(
 						m.srvRunner,
@@ -787,7 +809,53 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "S":
 				m.serverUIStatus = UIStatusStopped
 				m.serverErr = nil
+				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
+					item := m.sidebarItems[m.selected]
+					if item.Type == ItemModelEntry {
+						selectedModel := m.models[item.ModelIdx]
+						for _, inst := range m.srvRunner.GetAllInstances() {
+							if inst.ModelPath == selectedModel.FilePath {
+								_ = m.srvRunner.StopInstance(inst.Port)
+							}
+						}
+					}
+				}
+
+			case "ctrl+s":
+				m.serverUIStatus = UIStatusStopped
+				m.serverErr = nil
 				_ = m.srvRunner.Stop()
+
+			case "e", "E":
+				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
+					item := m.sidebarItems[m.selected]
+					if item.Type == ItemModelEntry {
+						selectedModel := m.models[item.ModelIdx]
+						var nextTask string
+						switch selectedModel.Task {
+						case "TEXT_GENERATION":
+							nextTask = "EMBEDDING"
+						case "EMBEDDING":
+							nextTask = "RERANKING"
+						case "RERANKING":
+							nextTask = "SPEECH_TO_TEXT"
+						case "SPEECH_TO_TEXT":
+							nextTask = "TEXT_TO_SPEECH"
+						case "TEXT_TO_SPEECH":
+							nextTask = "IMAGE_GENERATION"
+						case "IMAGE_GENERATION":
+							nextTask = "VISION"
+						case "VISION":
+							nextTask = "MULTIMODAL"
+						default:
+							nextTask = "TEXT_GENERATION"
+						}
+						selectedModel.Task = nextTask
+						m.config.ModelTasks[selectedModel.FilePath] = nextTask
+						_ = m.config.Save()
+						m.rebuildSidebar()
+					}
+				}
 
 			case "f", "F":
 				if m.selected >= 0 && m.selected < len(m.sidebarItems) {
@@ -1029,7 +1097,9 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Quantization:", selectedModel.Quantization))
 	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Context Length:", fmt.Sprintf("%d tokens", selectedModel.ContextLength)))
 	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Param Count:", formatParams(selectedModel.ParamCount)))
-	sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "File Size:", formatSize(selectedModel.FileSize)))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "File Size:", formatSize(selectedModel.FileSize)))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Runtime:", selectedModel.Runtime))
+	sb.WriteString(fmt.Sprintf("  %-16s %s (Press [E] to cycle)\n\n", "Task Type:", selectedModel.Task))
 
 
 
@@ -1121,23 +1191,30 @@ func (m *BrowserModel) rightPanelView(width int, height int) string {
 
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Server Status:") + " ")
 	var statusText string
-	switch m.serverUIStatus {
-	case UIStatusStopped:
-		statusText = StyleBadgeStopped.Render(" STOPPED ")
-	case UIStatusStarting:
-		statusText = StyleBadgeStarting.Render(" STARTING ")
-	case UIStatusRunning:
-		_, _, port := m.srvRunner.GetStatus()
+	isRunning := m.isModelRunning(selectedModel.FilePath)
+
+	if isRunning {
+		port := 50505
+		for _, inst := range m.srvRunner.GetAllInstances() {
+			if inst.ModelPath == selectedModel.FilePath {
+				port = inst.Port
+				break
+			}
+		}
 		statusText = StyleBadgeRunning.Render(" RUNNING ") + lipgloss.NewStyle().Foreground(ColorSecondary).Render(fmt.Sprintf(" on http://127.0.0.1:%d", port))
-	case UIStatusFailed:
+	} else if m.serverUIStatus == UIStatusStarting && m.runningModelPath == selectedModel.FilePath {
+		statusText = StyleBadgeStarting.Render(" STARTING ")
+	} else if m.serverUIStatus == UIStatusFailed && m.runningModelPath == selectedModel.FilePath {
 		statusText = StyleBadgeFailed.Render(" FAILED ")
+	} else {
+		statusText = StyleBadgeStopped.Render(" STOPPED ")
 	}
 	sb.WriteString(statusText + "\n")
 
-	if m.serverUIStatus == UIStatusFailed && m.serverErr != nil {
-		sb.WriteString(fmt.Sprintf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#FF3B30")).Render(fmt.Sprintf("Error: %v", m.serverErr))))
-	} else if m.serverUIStatus == UIStatusRunning && m.runningModelPath == selectedModel.FilePath {
+	if isRunning {
 		sb.WriteString("\n  Active model is currently serving requests.\n")
+	} else if m.serverUIStatus == UIStatusFailed && m.runningModelPath == selectedModel.FilePath && m.serverErr != nil {
+		sb.WriteString(fmt.Sprintf("\n  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#FF3B30")).Render(fmt.Sprintf("Error: %v", m.serverErr))))
 	}
 	sb.WriteString("\n")
 
@@ -1283,7 +1360,7 @@ func (m *BrowserModel) View() string {
 			}
 
 			isRunningStr := ""
-			if m.serverUIStatus == UIStatusRunning && m.runningModelPath == mod.FilePath {
+			if m.isModelRunning(mod.FilePath) {
 				isRunningStr = "▶ "
 			}
 
