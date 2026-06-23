@@ -44,6 +44,23 @@ func DiscoverModels(root string) ([]*GGUFMetadata, error) {
 			if exists && entry.ModTime == info.ModTime().Unix() && entry.Size == info.Size() {
 				meta = entry.Metadata
 				meta.FilePath = path
+				if meta.ID == "" {
+					meta.ID = filepath.Base(path)
+				}
+				if meta.Runtime == "" {
+					if extLower == ".gguf" {
+						meta.Runtime = "llama.cpp"
+					} else if extLower == ".onnx" {
+						meta.Runtime = "ONNX Runtime"
+					}
+				}
+				if meta.Task == "" {
+					if meta.EmbeddingLen > 0 {
+						meta.Task = "EMBEDDING"
+					} else {
+						meta.Task = "TEXT_GENERATION"
+					}
+				}
 			} else {
 				if extLower == ".gguf" {
 					var parseErr error
