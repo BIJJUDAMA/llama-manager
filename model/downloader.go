@@ -450,7 +450,7 @@ func SearchHFModels(query string, token string) ([]HFModelResult, error) {
 	}
 
 	escapedQuery := url.QueryEscape(query)
-	apiURL := fmt.Sprintf("https://huggingface.co/api/models?search=%s&filter=gguf&limit=20", escapedQuery)
+	apiURL := fmt.Sprintf("https://huggingface.co/api/models?search=%s&limit=20", escapedQuery)
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -515,13 +515,14 @@ func ListHFModelFiles(modelID string, token string) ([]HFSibling, error) {
 		return nil, err
 	}
 
-	// Filter siblings to only .gguf files
-	var ggufs []HFSibling
+	// Filter siblings to only .gguf and .onnx files
+	var files []HFSibling
 	for _, sibling := range detail.Siblings {
-		if strings.HasSuffix(strings.ToLower(sibling.Rpath), ".gguf") {
-			ggufs = append(ggufs, sibling)
+		ext := strings.ToLower(filepath.Ext(sibling.Rpath))
+		if ext == ".gguf" || ext == ".onnx" {
+			files = append(files, sibling)
 		}
 	}
 
-	return ggufs, nil
+	return files, nil
 }

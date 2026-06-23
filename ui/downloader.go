@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -39,13 +40,13 @@ type DownloaderModel struct {
 
 func NewDownloaderModel(cfg *config.Config, q *model.DownloadQueue) *DownloaderModel {
 	urlTi := textinput.New()
-	urlTi.Placeholder = "Paste direct GGUF model download URL (http/https)..."
+	urlTi.Placeholder = "Paste direct GGUF/ONNX model download URL (http/https)..."
 	urlTi.CharLimit = 512
 	urlTi.Width = 60
 	urlTi.Focus()
 
 	fileTi := textinput.New()
-	fileTi.Placeholder = "Enter local filename (optional, e.g. my-model.gguf)..."
+	fileTi.Placeholder = "Enter local filename (optional, e.g. model.gguf or model.onnx)..."
 	fileTi.CharLimit = 156
 	fileTi.Width = 60
 
@@ -80,15 +81,16 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 			m.urlInput.Focus()
 			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 		} else if len(msg.files) == 0 {
-			m.queue.AddFailedTask(msg.repoID, "Hugging Face Repo", fmt.Errorf("no GGUF files found in repository '%s'", msg.repoID))
+			m.queue.AddFailedTask(msg.repoID, "Hugging Face Repo", fmt.Errorf("no GGUF or ONNX files found in repository '%s'", msg.repoID))
 			m.focus = FocusURL
 			m.urlInput.Focus()
 			m.selectedTaskIdx = len(m.queue.GetTasks()) - 1
 		} else if len(msg.files) == 1 {
 			filename := msg.files[0].Rpath
 			modelName := filename
-			if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
-				modelName = modelName[:len(modelName)-5]
+			ext := strings.ToLower(filepath.Ext(modelName))
+			if ext == ".gguf" || ext == ".onnx" {
+				modelName = modelName[:len(modelName)-len(ext)]
 			}
 			downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", msg.repoID, filename)
 			m.queue.AddTask(modelName, filename, msg.files[0].Size, downloadURL)
@@ -134,8 +136,9 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 					selectedFile := m.resolvedFiles[m.selectedFileIdx]
 					filename := selectedFile.Rpath
 					modelName := filename
-					if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
-						modelName = modelName[:len(modelName)-5]
+					ext := strings.ToLower(filepath.Ext(modelName))
+					if ext == ".gguf" || ext == ".onnx" {
+						modelName = modelName[:len(modelName)-len(ext)]
 					}
 					parts := strings.Split(filename, "/")
 					baseName := parts[len(parts)-1]
@@ -192,8 +195,9 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 						if filename != "" {
 							downloadURL := fmt.Sprintf("https://huggingface.co/%s/resolve/main/%s", repoID, filename)
 							modelName := filename
-							if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
-								modelName = modelName[:len(modelName)-5]
+							ext := strings.ToLower(filepath.Ext(modelName))
+							if ext == ".gguf" || ext == ".onnx" {
+								modelName = modelName[:len(modelName)-len(ext)]
 							}
 							m.queue.AddTask(modelName, filename, 0, downloadURL)
 							m.urlInput.SetValue("")
@@ -220,12 +224,17 @@ func (m *DownloaderModel) Update(msg tea.Msg) (*DownloaderModel, tea.Cmd) {
 							}
 						}
 						if filename == "" {
-							filename = "downloaded_model.gguf"
+							if strings.Contains(strings.ToLower(urlStr), ".onnx") {
+								filename = "downloaded_model.onnx"
+							} else {
+								filename = "downloaded_model.gguf"
+							}
 						}
 
 						modelName := filename
-						if strings.HasSuffix(strings.ToLower(modelName), ".gguf") {
-							modelName = modelName[:len(modelName)-5]
+						ext := strings.ToLower(filepath.Ext(modelName))
+						if ext == ".gguf" || ext == ".onnx" {
+							modelName = modelName[:len(modelName)-len(ext)]
 						}
 
 						m.queue.AddTask(modelName, filename, 0, urlStr)
@@ -361,7 +370,7 @@ func (m *DownloaderModel) moveCursor(dir int) {
 func (m *DownloaderModel) View(width int, height int) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("DIRECT GGUF MODEL DOWNLOADER")))
+	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("DIRECT MODEL DOWNLOADER (GGUF / ONNX)")))
 
 	// Input form panel
 	var directSb strings.Builder
@@ -378,7 +387,7 @@ func (m *DownloaderModel) View(width int, height int) string {
 	directSb.WriteString("  " + m.urlInput.View() + "\n\n")
 	directSb.WriteString("  " + fileStyle.Render("Destination Filename (optional/required for repositories):") + "\n")
 	directSb.WriteString("  " + m.filenameInput.View() + "\n\n")
-	directSb.WriteString("  " + StyleHelp.Render("Supports direct GGUF links or Hugging Face repositories (e.g. unsloth/gemma-4-E4B-it-GGUF).") + "\n")
+	directSb.WriteString("  " + StyleHelp.Render("Supports direct GGUF/ONNX links or Hugging Face repositories (e.g. unsloth/gemma-4-E4B-it-GGUF).") + "\n")
 
 	if m.resolving {
 		directSb.WriteString("\n" + lipgloss.NewStyle().Foreground(ColorAccent).Render("  Fetching repository files list from Hugging Face...") + "\n")
@@ -413,7 +422,7 @@ func (m *DownloaderModel) View(width int, height int) string {
 	}
 
 	if m.focus == FocusFileList {
-		queueSb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorSecondary).Render("Select GGUF File (Enter to download, Esc to cancel):") + "\n")
+		queueSb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(ColorSecondary).Render("Select Model File (Enter to download, Esc to cancel):") + "\n")
 		maxVisible := queueHeight - 2
 		if maxVisible < 1 {
 			maxVisible = 1
@@ -440,7 +449,7 @@ func (m *DownloaderModel) View(width int, height int) string {
 		queueSb.WriteString(lipgloss.NewStyle().Bold(true).Render("Download Queue:") + "\n")
 		tasks := m.queue.GetTasks()
 		if len(tasks) == 0 {
-			queueSb.WriteString("  Queue is empty. Enter a GGUF URL above to start downloading.\n")
+			queueSb.WriteString("  Queue is empty. Enter a GGUF/ONNX URL above to start downloading.\n")
 		} else {
 			for idx, t := range tasks {
 				statusStr := ""
