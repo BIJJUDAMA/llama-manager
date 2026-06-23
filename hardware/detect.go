@@ -11,9 +11,10 @@ type RAMSpecs struct {
 }
 
 type GPUSpecs struct {
-	Name  string
-	VRAM  uint64 // in bytes
-	Type  string // e.g. CUDA, Metal, ROCm, CPU-only
+	Name        string
+	VRAM        uint64 // in bytes
+	Type        string // e.g. CUDA, Metal, ROCm, CPU-only
+	CudaVersion string
 }
 
 type HardwareSpecs struct {

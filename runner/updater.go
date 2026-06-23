@@ -191,8 +191,12 @@ func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (mainAsse
 		case "CUDA":
 			if strings.Contains(nameLower, "cuda") || strings.Contains(nameLower, "cu") {
 				score += 80
-				if strings.Contains(nameLower, "cu12") {
-					score += 10
+				cudaVer := specs.GPU.CudaVersion
+				if cudaVer == "" {
+					cudaVer = "12"
+				}
+				if strings.Contains(nameLower, "cu"+cudaVer) || strings.Contains(nameLower, "cuda-"+cudaVer) || strings.Contains(nameLower, "cuda"+cudaVer) {
+					score += 50
 				}
 			} else if strings.Contains(nameLower, "llvm") || strings.Contains(nameLower, "cpu") {
 				score += 10
@@ -248,9 +252,12 @@ func MatchAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (mainAsse
 			}
 
 			score := 100
-			mainCudaVer := extractCudaVersion(bestAsset.Name)
+			cudaVer := specs.GPU.CudaVersion
+			if cudaVer == "" {
+				cudaVer = "12"
+			}
 			thisCudaVer := extractCudaVersion(asset.Name)
-			if mainCudaVer != "" && thisCudaVer != "" && mainCudaVer == thisCudaVer {
+			if thisCudaVer != "" && strings.HasPrefix(thisCudaVer, cudaVer) {
 				score += 50
 			}
 
@@ -273,6 +280,265 @@ func extractCudaVersion(name string) string {
 		return matches[1]
 	}
 	return ""
+}
+
+// CheckLatestOnnxRelease queries GitHub API for the latest ONNX Runtime release.
+func CheckLatestOnnxRelease() (*GithubRelease, error) {
+	return fetchLatestRelease("https://api.github.com/repos/microsoft/onnxruntime/releases/latest")
+}
+
+// MatchOnnxAsset finds the most suitable ONNX Runtime release package.
+func MatchOnnxAsset(release *GithubRelease, specs *hardware.HardwareSpecs) (*ReleaseAsset, error) {
+	if len(release.Assets) == 0 {
+		return nil, fmt.Errorf("no assets in release")
+	}
+
+	var bestAsset *ReleaseAsset
+	bestScore := -1
+
+	for _, asset := range release.Assets {
+		nameLower := strings.ToLower(asset.Name)
+
+		// 1. Extension check
+		if !strings.HasSuffix(nameLower, ".zip") && !strings.HasSuffix(nameLower, ".tar.gz") && !strings.HasSuffix(nameLower, ".tgz") {
+			continue
+		}
+
+		// 2. OS check
+		osMatches := false
+		switch strings.ToLower(specs.OS) {
+		case "windows":
+			if strings.Contains(nameLower, "win") || strings.Contains(nameLower, "windows") {
+				osMatches = true
+			}
+		case "darwin", "macos":
+			if strings.Contains(nameLower, "osx") || strings.Contains(nameLower, "mac") || strings.Contains(nameLower, "darwin") {
+				osMatches = true
+			}
+		default: // assume linux
+			if strings.Contains(nameLower, "linux") {
+				osMatches = true
+			}
+		}
+
+		if !osMatches {
+			continue
+		}
+
+		score := 100
+
+		// 3. Architecture check
+		if strings.ToLower(specs.OS) == "darwin" || strings.ToLower(specs.OS) == "macos" {
+			if strings.Contains(nameLower, "arm64") {
+				score += 50
+			}
+		} else {
+			if strings.Contains(nameLower, "x64") || strings.Contains(nameLower, "x86_64") || strings.Contains(nameLower, "amd64") {
+				score += 30
+			} else if strings.Contains(nameLower, "arm64") {
+				if strings.Contains(strings.ToLower(runtime.GOARCH), "arm64") {
+					score += 30
+				}
+			}
+		}
+
+		// 4. GPU Backend check
+		if specs.GPU.Type == "CUDA" {
+			cudaVer := specs.GPU.CudaVersion
+			if cudaVer == "" {
+				cudaVer = "12"
+			}
+			if strings.Contains(nameLower, "gpu_cuda"+cudaVer) {
+				score += 100
+			} else if strings.Contains(nameLower, "gpu_cuda") {
+				score += 50
+			} else if strings.Contains(nameLower, "gpu") {
+				score += 30
+			} else if !strings.Contains(nameLower, "gpu") && !strings.Contains(nameLower, "cuda") {
+				score += 10
+			}
+		} else {
+			if !strings.Contains(nameLower, "gpu") && !strings.Contains(nameLower, "cuda") && !strings.Contains(nameLower, "training") {
+				score += 80
+			}
+		}
+
+		if score > bestScore {
+			bestScore = score
+			assetCopy := asset
+			bestAsset = &assetCopy
+		}
+	}
+
+	if bestAsset == nil {
+		return nil, fmt.Errorf("no matching ONNX asset found for OS %s and GPU type %s", specs.OS, specs.GPU.Type)
+	}
+
+	return bestAsset, nil
+}
+
+// QueryLocalOnnxVersion checks the presence of ONNX library files and reads the version.txt if available.
+func QueryLocalOnnxVersion(onnxDir string) (string, error) {
+	libName := "libonnxruntime.so"
+	if runtime.GOOS == "windows" {
+		libName = "onnxruntime.dll"
+	} else if runtime.GOOS == "darwin" {
+		libName = "libonnxruntime.dylib"
+	}
+	libPath := filepath.Join(onnxDir, libName)
+	if _, err := os.Stat(libPath); os.IsNotExist(err) {
+		return "Not Installed", fmt.Errorf("ONNX Runtime library not found")
+	}
+
+	versionPath := filepath.Join(onnxDir, "version.txt")
+	if data, err := os.ReadFile(versionPath); err == nil {
+		return strings.TrimSpace(string(data)), nil
+	}
+
+	return "Installed (Unknown Version)", nil
+}
+
+// ExtractOnnxLibrary extracts only the ONNX Runtime library from zip/tar.gz files.
+func ExtractOnnxLibrary(archivePath string, destDir string) error {
+	ext := strings.ToLower(filepath.Ext(archivePath))
+	if ext == ".zip" {
+		return extractOnnxZip(archivePath, destDir)
+	} else if ext == ".tar.gz" || ext == ".tgz" || strings.HasSuffix(strings.ToLower(archivePath), ".tar.gz") {
+		return extractOnnxTarGz(archivePath, destDir)
+	}
+	return fmt.Errorf("unsupported archive format: %s", ext)
+}
+
+func matchesOnnxLibName(name string) bool {
+	base := filepath.Base(name)
+	baseLower := strings.ToLower(base)
+	if runtime.GOOS == "windows" {
+		return baseLower == "onnxruntime.dll" || baseLower == "onnxruntime.lib"
+	}
+	if runtime.GOOS == "darwin" {
+		return strings.HasPrefix(baseLower, "libonnxruntime") && strings.HasSuffix(baseLower, ".dylib")
+	}
+	return strings.HasPrefix(baseLower, "libonnxruntime.so")
+}
+
+func extractOnnxZip(archivePath string, destDir string) error {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	found := false
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if matchesOnnxLibName(f.Name) {
+			targetPath := filepath.Join(destDir, filepath.Base(f.Name))
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			out, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			if err != nil {
+				rc.Close()
+				return err
+			}
+			_, err = io.Copy(out, rc)
+			out.Close()
+			rc.Close()
+			if err != nil {
+				return err
+			}
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("could not find onnxruntime library in zip")
+	}
+	return nil
+}
+
+func extractOnnxTarGz(archivePath string, destDir string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	found := false
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if matchesOnnxLibName(header.Name) {
+			targetPath := filepath.Join(destDir, filepath.Base(header.Name))
+			out, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, tr)
+			out.Close()
+			if err != nil {
+				return err
+			}
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("could not find onnxruntime library in tar.gz")
+	}
+	return nil
+}
+
+// DownloadAndInstallOnnxRuntime downloads the ONNX release asset, extracts the library files, and writes a version.txt.
+func DownloadAndInstallOnnxRuntime(url string, destDir string, version string, downloadsDir string, progressChan chan float64) error {
+	tempFile := filepath.Join(downloadsDir, fmt.Sprintf("onnxruntime-%s.archive", version))
+	if err := os.MkdirAll(downloadsDir, 0755); err != nil {
+		return err
+	}
+
+	err := DownloadRelease(url, tempFile, progressChan)
+	if err != nil {
+		return fmt.Errorf("failed to download: %w", err)
+	}
+	defer os.Remove(tempFile)
+
+	err = ExtractOnnxLibrary(tempFile, destDir)
+	if err != nil {
+		return fmt.Errorf("failed to extract library: %w", err)
+	}
+
+	versionPath := filepath.Join(destDir, "version.txt")
+	err = os.WriteFile(versionPath, []byte(version), 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write version.txt: %w", err)
+	}
+
+	return nil
 }
 
 // DownloadRelease downloads an asset URL and writes progress fraction (0.0 to 1.0) to progressChan.

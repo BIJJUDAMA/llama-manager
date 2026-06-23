@@ -16,7 +16,9 @@ func TestMatchAsset(t *testing.T) {
 		Name:    "llama.cpp b3310",
 		Assets: []ReleaseAsset{
 			{Name: "llama-b3310-bin-win-cu12.2.0-x64.zip", BrowserDownloadURL: "http://win-cuda-12.zip", Size: 100},
+			{Name: "llama-b3310-bin-win-cu13.0.0-x64.zip", BrowserDownloadURL: "http://win-cuda-13.zip", Size: 100},
 			{Name: "cudart-llama-bin-win-cuda-12.4-x64.zip", BrowserDownloadURL: "http://win-cudart-12.zip", Size: 50},
+			{Name: "cudart-llama-bin-win-cuda-13.3-x64.zip", BrowserDownloadURL: "http://win-cudart-13.zip", Size: 50},
 			{Name: "llama-b3310-bin-win-llvm-x64.zip", BrowserDownloadURL: "http://win-llvm.zip", Size: 80},
 			{Name: "llama-b3310-bin-ubuntu-x64.zip", BrowserDownloadURL: "http://linux.zip", Size: 70},
 			{Name: "llama-b3310-bin-macos-arm64.zip", BrowserDownloadURL: "http://mac-arm64.zip", Size: 60},
@@ -24,14 +26,15 @@ func TestMatchAsset(t *testing.T) {
 		},
 	}
 
-	// 1. Windows with CUDA GPU
-	specsWinCUDA := &hardware.HardwareSpecs{
+	// 1. Windows with CUDA 12 GPU
+	specsWinCUDA12 := &hardware.HardwareSpecs{
 		OS: "Windows",
 		GPU: hardware.GPUSpecs{
-			Type: "CUDA",
+			Type:        "CUDA",
+			CudaVersion: "12",
 		},
 	}
-	asset, cudart, err := MatchAsset(release, specsWinCUDA)
+	asset, cudart, err := MatchAsset(release, specsWinCUDA12)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -39,10 +42,29 @@ func TestMatchAsset(t *testing.T) {
 		t.Errorf("expected win-cu12.2.0 asset, got %s", asset.Name)
 	}
 	if cudart == nil || !strings.Contains(cudart.Name, "cudart-llama-bin-win-cuda-12.4-x64") {
-		t.Errorf("expected cudart asset matching CUDA DLLs, got %+v", cudart)
+		t.Errorf("expected cudart asset matching CUDA 12 DLLs, got %+v", cudart)
 	}
 
-	// 2. Windows with CPU only
+	// 2. Windows with CUDA 13 GPU
+	specsWinCUDA13 := &hardware.HardwareSpecs{
+		OS: "Windows",
+		GPU: hardware.GPUSpecs{
+			Type:        "CUDA",
+			CudaVersion: "13",
+		},
+	}
+	asset, cudart, err = MatchAsset(release, specsWinCUDA13)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "win-cu13.0.0") {
+		t.Errorf("expected win-cu13.0.0 asset, got %s", asset.Name)
+	}
+	if cudart == nil || !strings.Contains(cudart.Name, "cudart-llama-bin-win-cuda-13.3-x64") {
+		t.Errorf("expected cudart asset matching CUDA 13 DLLs, got %+v", cudart)
+	}
+
+	// 3. Windows with CPU only
 	specsWinCPU := &hardware.HardwareSpecs{
 		OS: "Windows",
 		GPU: hardware.GPUSpecs{
@@ -60,7 +82,7 @@ func TestMatchAsset(t *testing.T) {
 		t.Errorf("expected no cudart asset for CPU, got %s", cudart.Name)
 	}
 
-	// 3. macOS
+	// 4. macOS
 	specsMac := &hardware.HardwareSpecs{
 		OS: "darwin",
 		GPU: hardware.GPUSpecs{
@@ -76,6 +98,149 @@ func TestMatchAsset(t *testing.T) {
 	}
 	if cudart != nil {
 		t.Errorf("expected no cudart asset for Metal, got %s", cudart.Name)
+	}
+}
+
+func TestMatchOnnxAsset(t *testing.T) {
+	release := &GithubRelease{
+		TagName: "v1.27.0",
+		Name:    "onnxruntime v1.27.0",
+		Assets: []ReleaseAsset{
+			{Name: "onnxruntime-win-x64-1.27.0.zip", BrowserDownloadURL: "http://win-cpu.zip", Size: 100},
+			{Name: "onnxruntime-win-x64-gpu_cuda12-1.27.0.zip", BrowserDownloadURL: "http://win-cuda12.zip", Size: 100},
+			{Name: "onnxruntime-win-x64-gpu_cuda13-1.27.0.zip", BrowserDownloadURL: "http://win-cuda13.zip", Size: 100},
+			{Name: "onnxruntime-linux-x64-1.27.0.tgz", BrowserDownloadURL: "http://linux-cpu.tgz", Size: 100},
+			{Name: "onnxruntime-linux-x64-gpu_cuda12-1.27.0.tgz", BrowserDownloadURL: "http://linux-cuda12.tgz", Size: 100},
+			{Name: "onnxruntime-linux-x64-gpu_cuda13-1.27.0.tgz", BrowserDownloadURL: "http://linux-cuda13.tgz", Size: 100},
+			{Name: "onnxruntime-osx-arm64-1.27.0.tgz", BrowserDownloadURL: "http://mac-arm64.tgz", Size: 100},
+		},
+	}
+
+	// Windows CPU
+	specsWinCPU := &hardware.HardwareSpecs{
+		OS: "Windows",
+		GPU: hardware.GPUSpecs{
+			Type: "CPU",
+		},
+	}
+	asset, err := MatchOnnxAsset(release, specsWinCPU)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "win-x64-1.27.0.zip") {
+		t.Errorf("expected win-cpu, got %s", asset.Name)
+	}
+
+	// Windows CUDA 12
+	specsWinCUDA12 := &hardware.HardwareSpecs{
+		OS: "Windows",
+		GPU: hardware.GPUSpecs{
+			Type:        "CUDA",
+			CudaVersion: "12",
+		},
+	}
+	asset, err = MatchOnnxAsset(release, specsWinCUDA12)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "gpu_cuda12") {
+		t.Errorf("expected win gpu_cuda12, got %s", asset.Name)
+	}
+
+	// Windows CUDA 13
+	specsWinCUDA13 := &hardware.HardwareSpecs{
+		OS: "Windows",
+		GPU: hardware.GPUSpecs{
+			Type:        "CUDA",
+			CudaVersion: "13",
+		},
+	}
+	asset, err = MatchOnnxAsset(release, specsWinCUDA13)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "gpu_cuda13") {
+		t.Errorf("expected win gpu_cuda13, got %s", asset.Name)
+	}
+
+	// Linux CUDA 13
+	specsLinuxCUDA13 := &hardware.HardwareSpecs{
+		OS: "linux",
+		GPU: hardware.GPUSpecs{
+			Type:        "CUDA",
+			CudaVersion: "13",
+		},
+	}
+	asset, err = MatchOnnxAsset(release, specsLinuxCUDA13)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "linux-x64-gpu_cuda13") {
+		t.Errorf("expected linux gpu_cuda13, got %s", asset.Name)
+	}
+
+	// macOS
+	specsMac := &hardware.HardwareSpecs{
+		OS: "darwin",
+		GPU: hardware.GPUSpecs{
+			Type: "Metal",
+		},
+	}
+	asset, err = MatchOnnxAsset(release, specsMac)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !strings.Contains(asset.Name, "osx-arm64") {
+		t.Errorf("expected osx-arm64, got %s", asset.Name)
+	}
+}
+
+func TestExtractOnnxLibraryZip(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "onnx-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	zipPath := filepath.Join(tempDir, "onnx.zip")
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatalf("failed to create zip file: %v", err)
+	}
+
+	zw := zip.NewWriter(zipFile)
+	w, err := zw.Create("onnxruntime-win-x64-1.27.0/lib/onnxruntime.dll")
+	if err != nil {
+		t.Fatalf("failed to create zip entry: %v", err)
+	}
+	_, _ = w.Write([]byte("mock-dll-content"))
+
+	// Add an unrelated file that should not be extracted
+	wUnrelated, err := zw.Create("onnxruntime-win-x64-1.27.0/include/onnxruntime_c_api.h")
+	if err != nil {
+		t.Fatalf("failed to create zip entry: %v", err)
+	}
+	_, _ = wUnrelated.Write([]byte("mock-header-content"))
+
+	_ = zw.Close()
+	_ = zipFile.Close()
+
+	destDir := filepath.Join(tempDir, "extracted")
+	err = ExtractOnnxLibrary(zipPath, destDir)
+	if err != nil {
+		t.Fatalf("ExtractOnnxLibrary failed: %v", err)
+	}
+
+	// Verify onnxruntime.dll exists at the root of destDir
+	dllPath := filepath.Join(destDir, "onnxruntime.dll")
+	if _, err := os.Stat(dllPath); os.IsNotExist(err) {
+		t.Errorf("expected onnxruntime.dll to be extracted, not found")
+	}
+
+	// Verify header does not exist
+	headerPath := filepath.Join(destDir, "onnxruntime_c_api.h")
+	if _, err := os.Stat(headerPath); !os.IsNotExist(err) {
+		t.Errorf("expected onnxruntime_c_api.h not to be extracted")
 	}
 }
 

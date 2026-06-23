@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -54,6 +55,9 @@ func DetectHardware() (*HardwareSpecs, error) {
 	specs.GPU.Name = gpuName
 	specs.GPU.VRAM = gpuVRAM
 	specs.GPU.Type = gpuType
+	if gpuType == "CUDA" {
+		specs.GPU.CudaVersion = detectCudaVersion()
+	}
 
 	return specs, nil
 }
@@ -150,4 +154,49 @@ func getWindowsGPU() (string, uint64, string) {
 	}
 
 	return "Integrated Graphics / CPU", 0, "CPU"
+}
+
+func detectCudaVersion() string {
+	// 1. Env variable check (e.g. C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4)
+	cudaPath := os.Getenv("CUDA_PATH")
+	if cudaPath != "" {
+		base := filepath.Base(cudaPath)
+		if strings.HasPrefix(base, "v") {
+			parts := strings.Split(strings.TrimPrefix(base, "v"), ".")
+			if len(parts) > 0 {
+				return parts[0]
+			}
+		}
+	}
+
+	// 2. Try nvcc
+	cmd := exec.Command("nvcc", "--version")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err == nil {
+		re := regexp.MustCompile(`release (\d+)\.`)
+		matches := re.FindStringSubmatch(out.String())
+		if len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	// 3. Try nvidia-smi
+	nvSmiPath := "nvidia-smi"
+	stdNvSmi := filepath.Join(os.Getenv("ProgramFiles"), "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")
+	if _, err := os.Stat(stdNvSmi); err == nil {
+		nvSmiPath = stdNvSmi
+	}
+	cmdSmi := exec.Command(nvSmiPath)
+	var outSmi bytes.Buffer
+	cmdSmi.Stdout = &outSmi
+	if err := cmdSmi.Run(); err == nil {
+		re := regexp.MustCompile(`CUDA Version:\s*(\d+)`)
+		matches := re.FindStringSubmatch(outSmi.String())
+		if len(matches) > 1 {
+			return matches[1]
+		}
+	}
+
+	return ""
 }

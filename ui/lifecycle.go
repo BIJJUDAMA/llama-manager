@@ -75,6 +75,12 @@ type LifecycleModel struct {
 	appUpdateErr     error
 	appUpdateSuccess bool
 	appUpdateMsg     string
+
+	// ONNX Runtime fields
+	onnxLocalVersion  string
+	onnxLatestVersion string
+	onnxLatestRelease *runner.GithubRelease
+	updatingRuntime   string // "llamacpp", "onnx", or ""
 }
 
 func resolveAppVersion() string {
@@ -157,6 +163,13 @@ func (m *LifecycleModel) RefreshLocalVersion() {
 		m.localCommit = "N/A"
 		m.localBuildInfo = "N/A"
 	}
+
+	onnxVer, err := runner.QueryLocalOnnxVersion(m.config.Paths.OnnxRuntime)
+	if err == nil {
+		m.onnxLocalVersion = onnxVer
+	} else {
+		m.onnxLocalVersion = "Not Installed"
+	}
 }
 
 func (m *LifecycleModel) RefreshBackupStatus() {
@@ -190,6 +203,36 @@ func (m *LifecycleModel) StartCheckOnly() tea.Cmd {
 		ch <- updateMsg{
 			state:   state,
 			msg:     fmt.Sprintf("Latest available release: %s", release.TagName),
+			release: release,
+			ch:      ch,
+		}
+	}()
+
+	return m.ReadUpdateChan(ch)
+}
+
+func (m *LifecycleModel) StartOnnxCheckOnly() tea.Cmd {
+	ch := make(chan updateMsg)
+
+	go func() {
+		ch <- updateMsg{state: StateChecking, msg: "Checking for ONNX updates...", ch: ch}
+		release, err := runner.CheckLatestOnnxRelease()
+		if err != nil {
+			ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to check for ONNX updates: %w", err), ch: ch}
+			return
+		}
+
+		localV, _ := runner.QueryLocalOnnxVersion(m.config.Paths.OnnxRuntime)
+		state := StateUpdateAvailable
+		cleanLocal := strings.TrimPrefix(strings.ToLower(localV), "v")
+		cleanLatest := strings.TrimPrefix(strings.ToLower(release.TagName), "v")
+		if cleanLocal == cleanLatest && cleanLocal != "unknown" && cleanLocal != "not installed" {
+			state = StateNoUpdate
+		}
+
+		ch <- updateMsg{
+			state:   state,
+			msg:     fmt.Sprintf("Latest available ONNX release: %s", release.TagName),
 			release: release,
 			ch:      ch,
 		}
@@ -323,6 +366,68 @@ func (m *LifecycleModel) StartUpdate() tea.Cmd {
 	return m.ReadUpdateChan(ch)
 }
 
+func (m *LifecycleModel) StartOnnxUpdate() tea.Cmd {
+	ch := make(chan updateMsg)
+
+	go func() {
+		instances := m.srvRunner.GetAllInstances()
+		if len(instances) > 0 {
+			ch <- updateMsg{state: StateError, err: fmt.Errorf("cannot install ONNX: active server instances are running. Please stop all servers first."), ch: ch}
+			return
+		}
+
+		var release *runner.GithubRelease
+		var err error
+		if m.onnxLatestRelease != nil {
+			release = m.onnxLatestRelease
+		} else {
+			ch <- updateMsg{state: StateChecking, msg: "Checking latest ONNX release on GitHub...", ch: ch}
+			release, err = runner.CheckLatestOnnxRelease()
+			if err != nil {
+				ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to check ONNX release: %w", err), ch: ch}
+				return
+			}
+		}
+
+		onnxAsset, err := runner.MatchOnnxAsset(release, m.specs)
+		if err != nil {
+			ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to match ONNX release asset: %w", err), ch: ch}
+			return
+		}
+
+		ch <- updateMsg{state: StateDownloading, progress: 0.0, msg: fmt.Sprintf("Downloading %s...", onnxAsset.Name), ch: ch}
+
+		progressChan := make(chan float64, 5)
+		downloadErrChan := make(chan error, 1)
+		go func() {
+			downloadErrChan <- runner.DownloadAndInstallOnnxRuntime(
+				onnxAsset.BrowserDownloadURL,
+				m.config.Paths.OnnxRuntime,
+				release.TagName,
+				m.config.Paths.Downloads,
+				progressChan,
+			)
+		}()
+
+		for p := range progressChan {
+			ch <- updateMsg{state: StateDownloading, progress: p, msg: fmt.Sprintf("Downloading %s (%.1f%%)...", onnxAsset.Name, p*100.0), ch: ch}
+		}
+
+		if derr := <-downloadErrChan; derr != nil {
+			ch <- updateMsg{state: StateError, err: fmt.Errorf("failed to install ONNX Runtime: %w", derr), ch: ch}
+			return
+		}
+
+		ch <- updateMsg{
+			state: StateUpdateSuccess,
+			msg:   fmt.Sprintf("ONNX Runtime library installed successfully! Version: %s", release.TagName),
+			ch:    ch,
+		}
+	}()
+
+	return m.ReadUpdateChan(ch)
+}
+
 func (m *LifecycleModel) StartRollback() tea.Cmd {
 	ch := make(chan updateMsg)
 
@@ -431,13 +536,19 @@ func (m *LifecycleModel) Update(msg tea.Msg) (*LifecycleModel, tea.Cmd) {
 		}
 
 		if msg.release != nil {
-			m.latestRelease = msg.release
-			m.latestTagName = msg.release.TagName
+			if m.updatingRuntime == "onnx" {
+				m.onnxLatestRelease = msg.release
+				m.onnxLatestVersion = msg.release.TagName
+			} else {
+				m.latestRelease = msg.release
+				m.latestTagName = msg.release.TagName
+			}
 		}
 
 		if m.state == StateUpdateSuccess || m.state == StateRollbackSuccess || m.state == StateError {
 			m.RefreshLocalVersion()
 			m.RefreshBackupStatus()
+			m.updatingRuntime = ""
 		}
 
 		if m.state != StateUpdateSuccess && m.state != StateRollbackSuccess && m.state != StateError && m.state != StateNoUpdate && m.state != StateUpdateAvailable {
@@ -542,6 +653,25 @@ func (m *LifecycleModel) View(width int, height int) string {
 	}
 	sb.WriteString("\n")
 
+	// ── ONNX Runtime Installation ───────────────────────────────────────────
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("ONNX Runtime Library:") + "\n")
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Folder Path:", m.config.Paths.OnnxRuntime))
+
+	onnxVerStr := m.onnxLocalVersion
+	if onnxVerStr != "Not Installed" && !strings.Contains(onnxVerStr, "Unknown") {
+		onnxVerStr = StyleSuccess.Render(onnxVerStr)
+	} else if onnxVerStr == "Not Installed" {
+		onnxVerStr = StyleDanger.Render(onnxVerStr)
+	}
+	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Installed Version:", onnxVerStr))
+
+	if m.onnxLatestVersion != "" {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorWhite).Bold(true).Render(m.onnxLatestVersion)))
+	} else {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Latest Release:", lipgloss.NewStyle().Foreground(ColorMuted).Render("Not checked  [K] to check")))
+	}
+	sb.WriteString("\n")
+
 	// ── Preferences ──────────────────────────────────────────────────────────
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Preferences:") + "\n")
 	themeStr := lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render(strings.Title(m.config.Theme))
@@ -559,31 +689,45 @@ func (m *LifecycleModel) View(width int, height int) string {
 	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Platform:") + "\n")
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Operating System:", m.specs.OS))
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "GPU Accelerator:", m.specs.GPU.Type))
+	if m.specs.GPU.Type == "CUDA" && m.specs.GPU.CudaVersion != "" {
+		sb.WriteString(fmt.Sprintf("    %-20s %s\n", "CUDA Version:", lipgloss.NewStyle().Foreground(ColorWhite).Render(m.specs.GPU.CudaVersion)))
+	}
 	sb.WriteString("\n")
 
 	// ── Runtime status ───────────────────────────────────────────────────────
 	if m.state != StateIdle {
 		sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Status:") + "\n")
 		statusText := ""
+		targetName := "Inference runtime"
+		if m.updatingRuntime == "onnx" {
+			targetName = "ONNX Runtime"
+		} else if m.updatingRuntime == "llamacpp" {
+			targetName = "llama.cpp"
+		}
+
 		switch m.state {
 		case StateChecking:
-			statusText = "Checking latest llama.cpp release..."
+			statusText = fmt.Sprintf("Checking latest %s release...", targetName)
 		case StateNoUpdate:
-			statusText = StyleSuccess.Render("Inference runtime is up-to-date.")
+			statusText = StyleSuccess.Render(fmt.Sprintf("%s is up-to-date.", targetName))
 		case StateUpdateAvailable:
-			statusText = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("llama.cpp update available — press [U] to apply.")
+			if m.updatingRuntime == "onnx" {
+				statusText = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("ONNX Runtime update available — press [O] to apply.")
+			} else {
+				statusText = lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render("llama.cpp update available — press [U] to apply.")
+			}
 		case StateDownloading:
-			statusText = fmt.Sprintf("Downloading: %s", m.actionMsg)
+			statusText = fmt.Sprintf("Downloading %s: %s", targetName, m.actionMsg)
 		case StateExtracting:
-			statusText = fmt.Sprintf("Extracting: %s", m.actionMsg)
+			statusText = fmt.Sprintf("Extracting %s: %s", targetName, m.actionMsg)
 		case StateVerifying:
-			statusText = "Verifying installation integrity..."
+			statusText = fmt.Sprintf("Verifying %s installation...", targetName)
 		case StateUpdateSuccess:
-			statusText = StyleSuccess.Render("llama.cpp update completed successfully.")
+			statusText = StyleSuccess.Render(fmt.Sprintf("%s updated successfully.", targetName))
 		case StateRollingBack:
-			statusText = "Rolling back to previous backup..."
+			statusText = fmt.Sprintf("Rolling back %s...", targetName)
 		case StateRollbackSuccess:
-			statusText = StyleSuccess.Render("Rollback completed successfully.")
+			statusText = StyleSuccess.Render(fmt.Sprintf("%s rollback completed successfully.", targetName))
 		case StateError:
 			statusText = StyleDanger.Render(fmt.Sprintf("Error: %v", m.err))
 		}
@@ -600,14 +744,18 @@ func (m *LifecycleModel) View(width int, height int) string {
 	var helpKeys []string
 	if m.state != StateDownloading && m.state != StateExtracting && m.state != StateVerifying && m.state != StateRollingBack {
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Check llama.cpp", StyleHelpKey.Render("[C]")))
+		if m.latestTagName != "" {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Update llama.cpp", StyleHelpKey.Render("[U]")))
+		}
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Check ONNX", StyleHelpKey.Render("[K]")))
+		if m.onnxLatestVersion != "" {
+			helpKeys = append(helpKeys, fmt.Sprintf("%s Update ONNX", StyleHelpKey.Render("[O]")))
+		}
 		helpKeys = append(helpKeys, fmt.Sprintf("%s Check App", StyleHelpKey.Render("[V]")))
 		if m.appLatestTag != "" && m.appLatestTag != m.appVersion && !m.appUpdating {
 			helpKeys = append(helpKeys, fmt.Sprintf("%s Update App", StyleHelpKey.Render("[A]")))
 		}
-		helpKeys = append(helpKeys, fmt.Sprintf("%s Cycle Theme", StyleHelpKey.Render("[O]")))
-		if m.latestTagName != "" {
-			helpKeys = append(helpKeys, fmt.Sprintf("%s Apply llama.cpp Update", StyleHelpKey.Render("[U]")))
-		}
+		helpKeys = append(helpKeys, fmt.Sprintf("%s Cycle Theme", StyleHelpKey.Render("[Y]")))
 		if m.hasBackup {
 			helpKeys = append(helpKeys, fmt.Sprintf("%s Rollback", StyleHelpKey.Render("[R]")))
 		}

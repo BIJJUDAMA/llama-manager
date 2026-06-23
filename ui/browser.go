@@ -430,6 +430,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.screenMode = ScreenSettings
 				m.lifecycleModel.RefreshLocalVersion()
 				m.lifecycleModel.RefreshBackupStatus()
+				m.lifecycleModel.updatingRuntime = "llamacpp"
 				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
 			case "esc", "enter", "space":
 				m.llamaCPPMissingActive = false
@@ -636,7 +637,11 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Stop server on target port and launch with profile settings
 					m.serverUIStatus = UIStatusStarting
 					m.serverErr = nil
-					_ = m.srvRunner.StopInstance(p.Port)
+					m.runningModelPath = m.dashboard.Model.FilePath
+
+					// Find an available port if this port is occupied by another model
+					launchPort := findAvailablePort(p.Port, m.srvRunner, m.dashboard.Model.FilePath)
+					_ = m.srvRunner.StopInstance(launchPort)
 
 					cmds = append(cmds, startServerCmd(
 						m.srvRunner,
@@ -647,9 +652,9 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						p.GPULayers,
 						p.BatchSize,
 						p.Host,
-						p.Port,
+						launchPort,
 					))
-					cmds = append(cmds, checkHealthCmd(p.Port))
+					cmds = append(cmds, checkHealthCmd(launchPort))
 				}
 				m.screenMode = ScreenBrowser
 			}
@@ -692,17 +697,30 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.rebuildSidebar()
 				case "c", "C":
 					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						m.lifecycleModel.updatingRuntime = "llamacpp"
 						cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
 					}
 				case "u", "U":
 					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						m.lifecycleModel.updatingRuntime = "llamacpp"
 						cmds = append(cmds, m.lifecycleModel.StartUpdate())
+					}
+				case "k", "K":
+					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						m.lifecycleModel.updatingRuntime = "onnx"
+						cmds = append(cmds, m.lifecycleModel.StartOnnxCheckOnly())
+					}
+				case "o", "O":
+					if m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						m.lifecycleModel.updatingRuntime = "onnx"
+						cmds = append(cmds, m.lifecycleModel.StartOnnxUpdate())
 					}
 				case "r", "R":
 					if m.lifecycleModel.hasBackup && m.lifecycleModel.state != StateChecking && m.lifecycleModel.state != StateDownloading && m.lifecycleModel.state != StateExtracting && m.lifecycleModel.state != StateVerifying && m.lifecycleModel.state != StateRollingBack {
+						m.lifecycleModel.updatingRuntime = "llamacpp"
 						cmds = append(cmds, m.lifecycleModel.StartRollback())
 					}
-				case "o", "O":
+				case "y", "Y":
 					newTheme := "dracula"
 					switch strings.ToLower(m.config.Theme) {
 					case "dracula", "dark", "purple", "":
@@ -896,6 +914,7 @@ func (m *BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "u", "U":
 				m.lifecycleModel.RefreshLocalVersion()
 				m.lifecycleModel.RefreshBackupStatus()
+				m.lifecycleModel.updatingRuntime = "llamacpp"
 				m.screenMode = ScreenSettings
 				cmds = append(cmds, m.lifecycleModel.StartCheckOnly())
 
@@ -1599,4 +1618,22 @@ func (m *BrowserModel) llamaCPPMissingOverlayView(width, height int) string {
 		Padding(1, 2).
 		Width(boxWidth).
 		Render(sb.String())
+}
+
+func findAvailablePort(startPort int, srv runner.ModelRuntime, currentModelPath string) int {
+	instances := srv.GetAllInstances()
+	port := startPort
+	for {
+		busy := false
+		for _, inst := range instances {
+			if inst.Port == port && inst.ModelPath != currentModelPath {
+				busy = true
+				break
+			}
+		}
+		if !busy {
+			return port
+		}
+		port++
+	}
 }

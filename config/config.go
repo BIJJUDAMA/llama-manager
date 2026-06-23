@@ -33,12 +33,13 @@ func AppDataDir() (string, error) {
 }
 
 type Paths struct {
-	Models     string `json:"models"`
-	LlamaCPP   string `json:"llama_cpp"`
-	Profiles   string `json:"profiles"`
-	Cache      string `json:"cache"`
-	Benchmarks string `json:"benchmarks"`
-	Downloads  string `json:"downloads"`
+	Models      string `json:"models"`
+	LlamaCPP    string `json:"llama_cpp"`
+	OnnxRuntime string `json:"onnxruntime"`
+	Profiles    string `json:"profiles"`
+	Cache       string `json:"cache"`
+	Benchmarks  string `json:"benchmarks"`
+	Downloads   string `json:"downloads"`
 }
 
 type Config struct {
@@ -129,12 +130,13 @@ func DefaultConfig() *Config {
 func defaultConfig(dir string) *Config {
 	return &Config{
 		Paths: Paths{
-			Models:     filepath.Join(dir, "models"),
-			LlamaCPP:   filepath.Join(dir, "llama.cpp"),
-			Profiles:   filepath.Join(dir, "profiles"),
-			Cache:      filepath.Join(dir, "cache"),
-			Benchmarks: filepath.Join(dir, "benchmarks"),
-			Downloads:  filepath.Join(dir, "downloads"),
+			Models:      filepath.Join(dir, "models"),
+			LlamaCPP:    filepath.Join(dir, "llama.cpp"),
+			OnnxRuntime: filepath.Join(dir, "onnxruntime"),
+			Profiles:    filepath.Join(dir, "profiles"),
+			Cache:       filepath.Join(dir, "cache"),
+			Benchmarks:  filepath.Join(dir, "benchmarks"),
+			Downloads:   filepath.Join(dir, "downloads"),
 		},
 		Favorites:           []string{},
 		RecentLaunches:      []string{},
@@ -168,6 +170,7 @@ func (c *Config) CreateDirectories() error {
 	dirs := []string{
 		c.Paths.Models,
 		c.Paths.LlamaCPP,
+		c.Paths.OnnxRuntime,
 		c.Paths.Profiles,
 		c.Paths.Cache,
 		c.Paths.Benchmarks,
