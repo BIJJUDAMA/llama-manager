@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/BIJJUDAMA/llama-manager/config"
-	"github.com/BIJJUDAMA/llama-manager/model"
-	"github.com/BIJJUDAMA/llama-manager/runner"
+	"github.com/BIJJUDAMA/runora/config"
+	"github.com/BIJJUDAMA/runora/model"
+	"github.com/BIJJUDAMA/runora/runner"
 )
 
 func TestBrowserModelInit(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BIJJUDAMA/llama-manager/hardware"
+	"github.com/BIJJUDAMA/runora/hardware"
 )
 
 type GithubRelease struct {

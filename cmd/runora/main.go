@@ -10,9 +10,9 @@ import (
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/BIJJUDAMA/llama-manager/config"
-	"github.com/BIJJUDAMA/llama-manager/runner"
-	"github.com/BIJJUDAMA/llama-manager/ui"
+	"github.com/BIJJUDAMA/runora/config"
+	"github.com/BIJJUDAMA/runora/runner"
+	"github.com/BIJJUDAMA/runora/ui"
 )
 
 func buildVersion() string {
@@ -31,7 +31,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("llmgr", buildVersion())
+		fmt.Println("runora", buildVersion())
 		os.Exit(0)
 	}
 

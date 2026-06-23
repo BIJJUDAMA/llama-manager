@@ -1,4 +1,4 @@
-module github.com/BIJJUDAMA/llama-manager
+module github.com/BIJJUDAMA/runora
 
 go 1.26.2
 

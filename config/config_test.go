@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +52,7 @@ func loadWithDir(dir string) (*Config, error) {
 }
 
 func TestConfigLoadAndSave(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "llmgr-test")
+	tempDir, err := os.MkdirTemp("", "runora-test")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -125,5 +127,74 @@ func TestConfigHelpers(t *testing.T) {
 	cfg.RecordLaunch("m3")
 	if cfg.RecentLaunches[0] != "m3" {
 		t.Errorf("expected 'm3' to move to top, got %q", cfg.RecentLaunches[0])
+	}
+}
+
+func TestAppDataDirMigration(t *testing.T) {
+	tempBase, err := os.MkdirTemp("", "runora-migration-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempBase)
+
+	var envVar string
+	switch runtime.GOOS {
+	case "windows":
+		envVar = "APPDATA"
+	case "linux":
+		envVar = "XDG_CONFIG_HOME"
+	case "darwin":
+		envVar = "HOME"
+	}
+
+	if envVar == "" {
+		t.Skip("skipping migration test on unsupported platform")
+	}
+
+	oldEnv := os.Getenv(envVar)
+	defer os.Setenv(envVar, oldEnv)
+
+	var userConfigBase string
+	if runtime.GOOS == "darwin" {
+		userConfigBase = filepath.Join(tempBase, "Library", "Application Support")
+	} else {
+		userConfigBase = tempBase
+	}
+
+	if err := os.MkdirAll(userConfigBase, 0755); err != nil {
+		t.Fatalf("failed to create user config base: %v", err)
+	}
+
+	os.Setenv(envVar, tempBase)
+
+	oldLlmgrDir := filepath.Join(userConfigBase, "llmgr")
+	if err := os.MkdirAll(oldLlmgrDir, 0755); err != nil {
+		t.Fatalf("failed to create old llmgr dir: %v", err)
+	}
+	fakeConfig := filepath.Join(oldLlmgrDir, "config.json")
+	if err := os.WriteFile(fakeConfig, []byte(`{"theme":"forest"}`), 0644); err != nil {
+		t.Fatalf("failed to write fake config: %v", err)
+	}
+
+	resolvedDir, err := AppDataDir()
+	if err != nil {
+		if strings.Contains(err.Error(), "not yet implemented") {
+			t.Skipf("skipping migration test: %v", err)
+		}
+		t.Fatalf("unexpected error from AppDataDir: %v", err)
+	}
+
+	expectedDir := filepath.Join(userConfigBase, "runora")
+	if resolvedDir != expectedDir {
+		t.Errorf("expected AppDataDir to return %q, got %q", expectedDir, resolvedDir)
+	}
+
+	if _, err := os.Stat(oldLlmgrDir); !os.IsNotExist(err) {
+		t.Errorf("expected old llmgr directory to be gone (renamed), but it exists")
+	}
+
+	newConfig := filepath.Join(expectedDir, "config.json")
+	if _, err := os.Stat(newConfig); err != nil {
+		t.Errorf("expected migrated config.json to exist at %q, but got err: %v", newConfig, err)
 	}
 }

@@ -1,6 +1,8 @@
 # Binaries and build artifacts
 llama-manager
 llama-manager.exe
+runora
+runora.exe
 *.exe
 *.dll
 

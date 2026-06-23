@@ -8,28 +8,39 @@ import (
 	"runtime"
 )
 
-// AppDataDir returns the fixed directory where llmgr stores all its data.
+// AppDataDir returns the fixed directory where runora stores all its data.
 // Each supported platform places data in its conventional location.
 func AppDataDir() (string, error) {
+	var base string
+	var err error
+
 	switch runtime.GOOS {
 	case "windows":
-		base, err := os.UserConfigDir()
+		base, err = os.UserConfigDir()
 		if err != nil {
 			return "", fmt.Errorf("could not determine config directory: %w", err)
 		}
-		return filepath.Join(base, "llmgr"), nil
-
 	case "linux":
-		// TODO: implement XDG_DATA_HOME (~/.local/share/llmgr) for Linux
+		// TODO: implement XDG_DATA_HOME (~/.local/share/runora) for Linux
 		return "", fmt.Errorf("linux app data directory not yet implemented")
-
 	case "darwin":
-		// TODO: implement ~/Library/Application Support/llmgr for macOS
+		// TODO: implement ~/Library/Application Support/runora for macOS
 		return "", fmt.Errorf("macOS app data directory not yet implemented")
-
 	default:
 		return "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
+
+	oldPath := filepath.Join(base, "llmgr")
+	newPath := filepath.Join(base, "runora")
+
+	// Migration check: if new path does not exist, but old path exists, rename it.
+	if _, err := os.Stat(newPath); os.IsNotExist(err) {
+		if _, err := os.Stat(oldPath); err == nil {
+			_ = os.Rename(oldPath, newPath)
+		}
+	}
+
+	return newPath, nil
 }
 
 type Paths struct {

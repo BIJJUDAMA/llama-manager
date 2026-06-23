@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/BIJJUDAMA/llama-manager/config"
-	"github.com/BIJJUDAMA/llama-manager/hardware"
-	"github.com/BIJJUDAMA/llama-manager/model"
-	"github.com/BIJJUDAMA/llama-manager/runner"
+	"github.com/BIJJUDAMA/runora/config"
+	"github.com/BIJJUDAMA/runora/hardware"
+	"github.com/BIJJUDAMA/runora/model"
+	"github.com/BIJJUDAMA/runora/runner"
 )
 
 type BenchmarkResult struct {

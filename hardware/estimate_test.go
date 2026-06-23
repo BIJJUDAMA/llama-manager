@@ -2,7 +2,7 @@ package hardware
 
 import (
 	"testing"
-	"github.com/BIJJUDAMA/llama-manager/model"
+	"github.com/BIJJUDAMA/runora/model"
 )
 
 func TestEstimateMemoryUnified(t *testing.T) {

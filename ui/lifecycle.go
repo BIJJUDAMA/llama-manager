@@ -12,9 +12,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/BIJJUDAMA/llama-manager/config"
-	"github.com/BIJJUDAMA/llama-manager/hardware"
-	"github.com/BIJJUDAMA/llama-manager/runner"
+	"github.com/BIJJUDAMA/runora/config"
+	"github.com/BIJJUDAMA/runora/hardware"
+	"github.com/BIJJUDAMA/runora/runner"
 )
 
 type LifecycleState int
@@ -143,7 +143,7 @@ func (m *LifecycleModel) StartAppUpdate() tea.Cmd {
 	m.appUpdateErr = nil
 	m.appUpdateSuccess = false
 	return func() tea.Msg {
-		cmd := exec.Command("go", "install", "github.com/BIJJUDAMA/llama-manager/cmd/llmgr@latest")
+		cmd := exec.Command("go", "install", "github.com/BIJJUDAMA/runora/cmd/runora@latest")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return appUpdateMsg{err: fmt.Errorf("failed to run go install: %w (output: %s)", err, string(output))}
@@ -597,7 +597,7 @@ func (m *LifecycleModel) View(width int, height int) string {
 	sb.WriteString(fmt.Sprintf("  %s\n\n", lipgloss.NewStyle().Foreground(ColorPrimary).Bold(true).Render("SETTINGS")))
 
 	// ── App Version ──────────────────────────────────────────────────────────
-	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Llama Manager:") + "\n")
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Render("Runora:") + "\n")
 	appVerStr := lipgloss.NewStyle().Foreground(ColorWhite).Render(m.appVersion)
 	sb.WriteString(fmt.Sprintf("    %-20s %s\n", "Installed Version:", appVerStr))
 	if m.appChecking {
